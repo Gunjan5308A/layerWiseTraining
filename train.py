@@ -21,6 +21,7 @@ import time
 import math
 import pickle
 from contextlib import nullcontext
+import matplotlib.pyplot as plt
 
 import numpy as np
 import torch
@@ -28,6 +29,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
+
+loss_data = []  # List to store loss values for plotting
+val_loss_data = []  # List to store validation loss values for plotting
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -263,6 +267,7 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        val_loss_data.append(losses['val'])  # Store validation loss for plotting
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -325,12 +330,23 @@ while True:
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+        loss_data.append(lossf)
     iter_num += 1
     local_iter_num += 1
 
     # termination conditions
     if iter_num > max_iters:
+        train_iters = [x for x in range(len(loss_data))]
+        plt.plot(train_iters, loss_data, label='Training Loss', color='blue')
+        val_iters = [x for x in range(len(val_loss_data))]
+        plt.plot(val_iters, val_loss_data, label='Validation Loss', color='orange')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.title('Training Loss over Iterations')
+        plt.legend()
+        plt.savefig('loss_plot.png')
         break
 
 if ddp:
-    destroy_process_group()
+    destroy_process_group() 
+    

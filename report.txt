@@ -1,0 +1,251 @@
+val loss= 4.6483
+train loss= 4.4943
+
+batch_size = 1
+block_size = 256
+gradient_accumulation_steps = 16
+
+max_iters = 30000
+lr_decay_iters = 30000
+
+# eval stuff
+eval_interval = 1000
+eval_iters = 200
+log_interval = 100
+
+# weight decay
+weight_decay = 1e-1
+learning_rate = 3e-4
+
+n_layer = 12
+n_head = 8
+n_embd = 512
+dropout = 0.2
+
+compile = False
+
+sample:
+
+The study, published by the World Health Organization for Children's Health, was published in the Journal of the National Research School of Climate Change under the study, which was published in the journal Energy Science.
+
+What’s been the results of the study?
+
+The most recent study of the study found support for the new study, compared to 14 percent of the study’s national average. To which this study is done, the researchers call for a more complex study. Many of the findings are available here and here.
+
+How does the researchers determine more about the results of the study?
+
+How does the researchers plan for a study and how to track how to measure the results of the study’s results?
+
+This finding takes a little more than 1,000 years to understand what the results are and what they’re going to, how they’ll work on the results. With the study, the findings show that they may be turning away by a previous study, or just looking at the results of the study’s results.
+
+‘The findings suggest that this study is not important,’’ he said. “The findings, during the time, show that the study’s results suggest that the results were very interesting.”
+
+The results are consistent with the study’s results, but they show this evidence could not be worth understanding.
+
+The new study also shows that the study had found that nearly half of those findings were not considered the same as the original study.
+
+The results of these findings were conducted using the study’s study paper.
+
+The study found that people with a different trial — the researchers — would have had to do a better job of dealing with what they were on when they were in the study.
+
+“People with different results can say, ‘Oh, what are these?’”
+
+The study led to study positive for participants with two-quarters of participants in the study.
+
+“Not only that’s a problem in a previous study,” said Dr. Zann.
+
+Kelelson, director of the Health Center for Health and Human Services, told the researchers that if the results had been similar to these results, the researchers’ work may have been further’s
+
+“It’s a challenge to
+---------------
+
+
+From the U.S. Department of Defense, at a news conference, and in Paris, another prominent official from the United States Department of Justice, spoke about a “my experience,” as the official confirmed. “I’m still going to have a great sense of humor. I’ve got a lot of feeling that I’ve got a bit of value, just…and I’m going to have to get rid of it.”
+
+In the recent Global Times report, the White House said it will help reduce the number of US intelligence agencies to the next several months.
+
+The White House said it will help boost the amount of security that were registered to the federal government.
+
+“But we’re thinking about the lack of security,” said John Schlesland, a director at the Department of Justice, in an email to White House press release.
+
+“We have to take a quick look at if it’s over.”
+
+The White House doesn’t see how, according to officials, only 9 percent of US intelligence agencies are “very careful” about the security risks they would not be able to have with their own names.
+
+The White House’s new director, David O’Hord, said the White House has no idea what the White House said.
+
+“The president has just been very frustrated about the administration’s role in planning a strong investigation and that has been committed to the scandal,” O’Hord said. “It’s been a tough time for us to know if we are involved in any terrorist organization, because we’re a very specific group, that doesn’t fit together. The American people are the ones who have said anything. It’s how we’re going to do this.”
+
+He added that he had not had a mission to understand the White House’s role in it.
+
+“We’re not going to want to see what he should do for him,” O’Hord said. “He’s in the stands and he’s in the table.”
+
+“I remember that,” O’Hord, who was previously members of the White House, told the New
+---------------
+
+
+A second-year, federal judge was struck down by a “real struggle” in Mexico City Court in 2008.
+
+The Supreme Court, which is the one leading federal judge in the state, said the decision was based on an unexpected decision by the state to put “not just civil rights in Mexico.” The court agreed that the decision was being made by the state to bar an Obama-era government that was signed by the federal government in the early years.
+
+“This is the first time that any law (and the state) would be allowed to produce citizens without a license, for the possibility of getting a license,” the court said in a recent report.
+
+The court also said that the system is not allowed to be accepted in a court.
+
+The court also said it is possible that the court would encourage the legislature to have an appeal to a Supreme Court.
+
+“The Supreme Court will begin the decision this week,” said a court judge. “The court is trying to decide who is appointed. If the Supreme Court has a court decision, the court will allow the state to not disclose the case.”
+
+The district attorney general’s office said that the case would have been filed over the Supreme Court’s decision to put the case down.
+
+The other three things that led to the Supreme Court’s decision was that the Supreme Court passed the ruling because it was open and is in no way open in the state.
+
+The court also noted the judges’ decision had come after federal prosecutors have done so in certain cases in case the court did not take place in the state.
+
+The case, approved by the United States Court, involves the state’s order to be ordered not only in the courts without a warrant.
+
+The court will later say there is an opportunity for the court to decide whether the case would be constitutional.
+
+The court had struck two people who were affected by the decision.
+
+The federal courts (LAG) are expected to consider the case, which was reported in a first-person hearing in January 2017.
+
+Tobley Kollier, president of the New York state’s state’s Center for Islamic Studies, said the court would put a state in the right direction.
+
+“A certain policy has been brought to justice court by the
+---------------
+
+
+The second-year, five-year, 14-year, 7-year-old's dad bought a $300,000 value in the first round of the season, but he's got his wife and five-year-old daughter.
+
+"She was just going to be part of the house that I've had to be there. It's because of my father's age for five and a half years, and I'm pretty sure that's his life. He's never going to be able to do that again," he said.
+
+"I'm on the front door," he said. "I'm a kid. I've never seen anyone."
+
+Now it's time to finally start talking.
+
+"I've had a couple of times when I was a kid."
+
+"Some times I'm in life, that's my life. I'm just going to be late," he said. "That's the time to go."
+
+He's about to go up to the front door.
+
+"I'm a kid. I've got my kids in the house in my mind. I'm so happy to hang out for the next couple of years. I'm going to do it again," said the boy.
+
+"I'm a man."
+
+A woman who had been in contact with the boy who was in contact with her son.
+
+"I'm sorry for the kids. I'm sorry for the girls," she said. "I don't think he was coming from that house."
+
+The boy said it was "the first time that I had seen them, and that didn't happen."
+
+The man asked the girl if she had been in contact with a girl.
+
+"I don't want to go to my house, but I'm said to my father."
+
+The girl said she had not been in contact with her mother on the same day.
+
+"At the time of the violence, I'm really angry that the boy's coming into contact with the boy," she said.
+
+"I'm from the home, I've heard the mother, since I was walking in at the home, and I'm very happy there was a lot of girls getting over there."
+
+The two girls were found in each other's building, a front row, a side of the walls and a wall.
+
+The girls agreed to speak with the girl,
+---------------
+
+
+The company that completed for the second time in six years, are getting its first studio album of the series. It would be a really exciting time for us as it is, but we know we have a lot of people working outside of the world with a lot of people who want to play it. It will be a kind of fun to be kind of great if you have more than ten years of experience and the impact are good, but we’ve never had a lot of time to stop doing that. We’re seeing that in the end, we have a really good time playing it out. We’re still doing our part to build a lot of stuff that we can do and but we’re doing things that we’ve never met,” said O’Brien.
+
+“We’re also working on how we are about to play it. We did it in our name, though, and we’re doing it and we’re trying to work on it, so we’re going to get people to work on it, and we’re going to have a lot more time to do it and we haven’t shown a lot of data.”
+
+At the same time, O’Connor had the idea of having a couple of goals in the past. He’s the one who has played with the club and he’s also also missed the opportunity to play it.
+
+“We’re saying that,” O’Hareline said with a smile, noting that O’Hareline is one of the most important players in the league. “We’re not saying that we’re the biggest player in the league because we’re going to have a lot of ability to do it,” O’Hareline said. “We’re still going to make sure that it will go for a lot more time.”
+
+O’Hareline also shared with his team of players who have played for eight seasons in the last four seasons, including the loss of the year-in-year-old. He also said he’s expected that O’Hareline would be a better option for O’Hareline to keep him at the right time.
+
+O’Hareline said
+---------------
+
+
+The team was able to play in the final for another long period of the season.
+
+The team led the Lions to the second round of the season. The team's second-round pick went against the New York Cardinals.
+
+Two seasons later, the Patriots had a key.
+
+The team's third-round pick was the same as the Giants' former team-high 5-0.
+
+The Red Sox' season-ending play came a lot, but the team went a bit bigger.
+
+The New York Giants' offensive coordinator Alex Dagan got a good shot, but the White Sox' defense didn't have the same form.
+
+The New York Jets' offensive coordinator Greg T.J. Granz also had a good record.
+
+In the fifth round, the Dallas Maple Leafs went against the Big 12.
+
+"I'm getting a lot better," Dagan said.
+
+Neyer Williams, who had a few games-high 200 yards with a two-time record, scored two goals and a three-inch lead in the first round.
+
+"The whole team has a lot of work and a lot of work to do. The players have other hard options when they're doing it. But that was a good thing. You know, I'm bringing this to the guys,' says Mr. Granz. "You have to have to do that with this. You have to be close to that. You have to be able to get out of it and work to get it done. I'll be able to do that."
+
+Citing the decision with the victory, Granz said he's not going to see his right off the season at stake.
+
+"I can't focus on me, I'm not quite sure how this is going on," he said.
+
+"I'm a good ball player, I'm a great guy and I'm a lot of good guys and I'm very excited to have a lot of opportunities."
+
+Since then, he's driven by a couple of issues.
+
+"I'm a great player. If I'm a player, I will be a good player and I'm good to have a good season," he said. "I'll help but I'm like that. I'm a great coach. I'm a great player."
+
+"I get a lot of people that I'm playing with so many years
+---------------
+
+
+The first attempt was to make public statements and public comments on the subject of a major attack on a Muslim Brotherhood. As one senior adviser to the US military, the organization's director, David Fazer, told the Senate press conference. "We must also have an investigation regarding the victims and the issue between the Muslim Brotherhood and the Muslim Brotherhood. We have an investigation that is currently pending."
+
+The case was conducted on the 4th of January 2015 by the group's president. He used the names of countries from the Muslim Brotherhood.
+
+It was also said that the group's efforts to be held on the next day were in place to take effect because the group was not able to keep its military and international military presence.
+
+"As many as half of the members of the group have been arrested, the group has been convicted of all of its security," Fazer said. "This is an ongoing investigation. It is now a crime in which the group has been arrested."
+
+The group's official did not specifically comment on how the group's organization would take active action to prevent the group from using an e-mail server, the report said.<|endoftext|>This book is about the use of the term "bew", and is now used to draw the important questions. It is such a "bew" manner that we call "bew" to "bew", and "clare" in the language to which the text is created and which the words "bew" exist and are written by the "bew" to use a word with the words "bew" in other words."
+
+When it comes to going public, it creates a function of which the words "bew", "bew", and "bew" are "bew", and "bew" are "bew", as if it is "bew" or "cew" and "cew" that are not in the language, language and language.
+
+The work was written by a "bew", "bew", and "bew" for if it is created, or if it is written in the American press.
+
+The first and last are the words "bew". The "bew" is a reference to various language and "bew" of the word. It is written as follows:
+
+"bew" is the word "bew" is a reference in the "b
+---------------
+
+
+Watch the top 4 stories below.<|endoftext|>The President's administration, the Democratic Party, is trying to turn the attention of the former New York Times reporter, Josh W. Bush and others to counter the Syria crisis.
+
+With the $2.4 billion to increase budget deficit, the president has said his government was responsible for the decision by the White House to control the security net.
+
+"By doing so, the Obama administration's biggest economic move was through the first half of World War II negotiations," said the White House press secretary. "We need to understand what's happening and what's happening."
+
+"Let's look at the current budget. The budget is not the same for the White House," the president said. "It's the same for the White House, the White House, the second one."
+
+W.E. Barroeiner, who was known for his involvement in the 2008 agreement, said the president showed that what the administration is working toward will be a "very important thing," as the president said.
+
+"We need to investigate. The president did not want to see which of these options would be," Trump said. "The president is here to see us as a response."
+
+On Sunday, the president's speech would allow the president to get more into the White House. Such a new president could have been a bit of a challenge in the Obama administration – so his supporters had a clearest possible choice to be able to solve the issue.
+
+The president said: "This is a political issue, I'm sure we'll have a big problem in the next three years."
+
+The president said that if the president's comments came up, he would have to be asked to give Trump a "new kind of decision," which was a "fate," administration statement.
+
+"They must have been asked to say, 'I'm not going to deal with it.' And that's what the president said with the president, the president, the president, the president of the United States, the president and the president of the United States in the election."
+
+"The president wants to get rid of the president as the president of the United States," Trump said. "It's only a single time, you need to have a president like you," he said. "And they have to do it."
+
+Trump has made the effort even though he has not won R
