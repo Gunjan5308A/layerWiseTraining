@@ -1,9 +1,32 @@
 """
 Layer-wise training script for nanoGPT.
-Uses soft-freezing (per-param-group LR control) with a single global optimizer
-to preserve AdamW momentum. Each layer gets full LR while frozen layers get
-a small LR (freeze_lr_mult). After each full cycle, a global sync phase runs
-a few end-to-end steps to re-align all layers. Based on train.py.
+
+This implements a soft-freezing approach where transformer layers are trained
+sequentially rather than simultaneously. The key insight is that instead of
+fully freezing layers (which loses AdamW momentum), we use a reduced learning
+rate multiplier (freeze_lr_mult) for inactive layers.
+
+Algorithm:
+1. LAYER-WISE PHASE: For each layer i in [0, n_layer):
+   - Set layer i's LR to full learning rate
+   - Set all other layers' LR to lr * freeze_lr_mult (soft freeze)
+   - Always-trainable groups (wte, wpe, ln_f) always get full LR
+   - Run 'layer_examples' optimizer steps
+
+2. GLOBAL SYNC PHASE: After completing a full cycle through all layers:
+   - Set ALL layers to full learning rate
+   - Run 'sync_steps' end-to-end steps
+   - This re-aligns all layers and allows co-adaptation
+
+Why soft-freezing?
+- Fully freezing layers loses AdamW momentum, causing "cold restart" when unfreezing
+- Soft-freezing preserves first/second moment estimates in AdamW
+- The small LR keeps the optimizer state "warm" for each layer
+
+Single global optimizer:
+- All layers share one optimizer (not per-layer optimizers)
+- This preserves AdamW momentum across the entire training process
+- The LR manipulation is done via param_group['lr'] = base_lr * freeze_lr_mult
 
 Usage (single GPU):
 $ python layerWiseTrain.py --batch_size=32 --compile=False

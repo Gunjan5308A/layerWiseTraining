@@ -1,0 +1,139 @@
+step 0: train loss 10.8937, val loss 10.8946 (phase: layer_0)
+iter 100: loss 9.8457, time 808.19ms, mfu 1.95%, phase: layer_3
+iter 200: loss 8.9503, time 777.92ms, mfu 1.96%, phase: layer_6
+iter 300: loss 7.5810, time 780.87ms, mfu 1.96%, phase: layer_9
+iter 400: loss 7.2179, time 779.23ms, mfu 1.97%, phase: layer_1
+iter 500: loss 6.9343, time 787.84ms, mfu 1.97%, phase: layer_4
+iter 600: loss 6.9372, time 778.86ms, mfu 1.98%, phase: layer_7
+iter 700: loss 7.0116, time 780.53ms, mfu 1.98%, phase: layer_11
+iter 800: loss 6.9387, time 782.09ms, mfu 1.98%, phase: layer_2
+iter 900: loss 5.9151, time 783.41ms, mfu 1.99%, phase: layer_5
+iter 1000: loss 6.1218, time 779.56ms, mfu 1.99%, phase: layer_8
+step 1000: train loss 6.3811, val loss 6.3901 (phase: layer_9)
+saving checkpoint to out
+iter 1100: loss 6.3677, time 779.76ms, mfu 1.99%, phase: layer_0
+iter 1200: loss 6.1603, time 779.83ms, mfu 2.00%, phase: layer_3
+iter 1300: loss 6.6307, time 779.05ms, mfu 2.00%, phase: layer_6
+iter 1400: loss 6.3436, time 784.41ms, mfu 2.00%, phase: layer_10
+iter 1500: loss 6.4330, time 779.68ms, mfu 2.00%, phase: layer_1
+iter 1600: loss 5.8884, time 782.17ms, mfu 2.00%, phase: layer_4
+iter 1700: loss 6.4637, time 781.45ms, mfu 2.00%, phase: layer_7
+iter 1800: loss 6.0905, time 782.63ms, mfu 2.01%, phase: layer_11
+iter 1900: loss 6.0790, time 780.91ms, mfu 2.01%, phase: layer_2
+iter 2000: loss 5.4417, time 781.35ms, mfu 2.01%, phase: layer_5
+step 2000: train loss 5.8824, val loss 5.9692 (phase: layer_5)
+saving checkpoint to out
+iter 2100: loss 5.7077, time 788.80ms, mfu 2.01%, phase: layer_9
+iter 2200: loss 5.7113, time 781.48ms, mfu 2.01%, phase: layer_0
+iter 2300: loss 6.7017, time 779.84ms, mfu 2.01%, phase: layer_3
+iter 2400: loss 5.7887, time 784.14ms, mfu 2.01%, phase: layer_6
+iter 2500: loss 5.9370, time 782.35ms, mfu 2.01%, phase: layer_10
+iter 2600: loss 5.2387, time 783.41ms, mfu 2.01%, phase: layer_1
+iter 2700: loss 5.4230, time 784.59ms, mfu 2.01%, phase: layer_4
+iter 2800: loss 5.6612, time 786.68ms, mfu 2.01%, phase: layer_8
+iter 2900: loss 5.5769, time 782.33ms, mfu 2.01%, phase: layer_11
+iter 3000: loss 5.7120, time 781.85ms, mfu 2.01%, phase: layer_2
+step 3000: train loss 5.5866, val loss 5.6471 (phase: layer_2)
+saving checkpoint to out
+iter 3100: loss 5.3261, time 783.26ms, mfu 2.01%, phase: layer_5
+iter 3200: loss 5.7084, time 780.91ms, mfu 2.01%, phase: layer_9
+iter 3300: loss 5.5374, time 782.38ms, mfu 2.01%, phase: layer_0
+iter 3400: loss 5.5733, time 782.65ms, mfu 2.01%, phase: layer_3
+iter 3500: loss 6.0754, time 782.54ms, mfu 2.01%, phase: layer_7
+iter 3600: loss 5.6448, time 781.84ms, mfu 2.01%, phase: layer_10
+iter 3700: loss 5.6766, time 782.09ms, mfu 2.01%, phase: layer_1
+iter 3800: loss 4.7546, time 783.91ms, mfu 2.01%, phase: layer_4
+iter 3900: loss 5.5540, time 780.47ms, mfu 2.01%, phase: layer_8
+iter 4000: loss 5.0991, time 782.01ms, mfu 2.01%, phase: layer_11
+step 4000: train loss 5.3815, val loss 5.4499 (phase: layer_11)
+saving checkpoint to out
+iter 4100: loss 4.7566, time 779.51ms, mfu 2.01%, phase: layer_2
+iter 4200: loss 6.5620, time 782.93ms, mfu 2.01%, phase: layer_6
+iter 4300: loss 5.3872, time 780.35ms, mfu 2.01%, phase: layer_9
+iter 4400: loss 5.5197, time 780.26ms, mfu 2.01%, phase: layer_0
+iter 4500: loss 5.6515, time 779.44ms, mfu 2.01%, phase: layer_3
+iter 4600: loss 5.3624, time 780.94ms, mfu 2.02%, phase: layer_7
+iter 4700: loss 5.3183, time 779.57ms, mfu 2.02%, phase: layer_10
+iter 4800: loss 5.1830, time 779.91ms, mfu 2.02%, phase: layer_1
+iter 4900: loss 5.0516, time 779.75ms, mfu 2.02%, phase: layer_5
+iter 5000: loss 4.3275, time 782.33ms, mfu 2.02%, phase: layer_8
+step 5000: train loss 5.2526, val loss 5.2795 (phase: layer_8)
+saving checkpoint to out
+iter 5100: loss 5.3098, time 779.85ms, mfu 2.02%, phase: layer_11
+iter 5200: loss 5.5787, time 779.65ms, mfu 2.02%, phase: layer_2
+iter 5300: loss 5.1139, time 782.11ms, mfu 2.02%, phase: layer_6
+iter 5400: loss 5.9234, time 779.77ms, mfu 2.02%, phase: layer_9
+iter 5500: loss 4.8754, time 781.18ms, mfu 2.02%, phase: layer_0
+iter 5600: loss 4.9229, time 784.60ms, mfu 2.02%, phase: layer_4
+iter 5700: loss 5.2457, time 784.91ms, mfu 2.02%, phase: layer_7
+iter 5800: loss 5.5240, time 784.43ms, mfu 2.01%, phase: layer_10
+iter 5900: loss 5.1932, time 786.98ms, mfu 2.01%, phase: layer_1
+iter 6000: loss 4.7474, time 783.50ms, mfu 2.01%, phase: layer_5
+step 6000: train loss 5.1636, val loss 5.2410 (phase: layer_5)
+saving checkpoint to out
+iter 6100: loss 4.9416, time 783.95ms, mfu 2.01%, phase: layer_8
+iter 6200: loss 5.8782, time 781.44ms, mfu 2.01%, phase: layer_11
+iter 6300: loss 5.0420, time 782.75ms, mfu 2.01%, phase: layer_3
+iter 6400: loss 5.0540, time 783.03ms, mfu 2.01%, phase: layer_6
+iter 6500: loss 4.6228, time 783.86ms, mfu 2.01%, phase: layer_9
+iter 6600: loss 4.8015, time 788.18ms, mfu 2.01%, phase: layer_0
+iter 6700: loss 4.9514, time 779.13ms, mfu 2.01%, phase: layer_4
+iter 6800: loss 5.2286, time 788.16ms, mfu 2.01%, phase: layer_7
+iter 6900: loss 5.3451, time 783.04ms, mfu 2.01%, phase: layer_10
+iter 7000: loss 5.4428, time 780.70ms, mfu 2.01%, phase: layer_2
+step 7000: train loss 5.0848, val loss 5.1517 (phase: layer_2)
+saving checkpoint to out
+iter 7100: loss 5.0558, time 785.40ms, mfu 2.01%, phase: layer_5
+iter 7200: loss 4.6709, time 785.27ms, mfu 2.01%, phase: layer_8
+iter 7300: loss 5.1608, time 783.60ms, mfu 2.01%, phase: sync
+iter 7400: loss 5.4336, time 786.19ms, mfu 2.01%, phase: layer_3
+iter 7500: loss 5.2213, time 785.84ms, mfu 2.01%, phase: layer_6
+iter 7600: loss 5.5102, time 783.03ms, mfu 2.01%, phase: layer_9
+iter 7700: loss 5.2971, time 781.87ms, mfu 2.01%, phase: layer_1
+iter 7800: loss 5.5118, time 782.90ms, mfu 2.01%, phase: layer_4
+iter 7900: loss 5.0644, time 782.51ms, mfu 2.01%, phase: layer_7
+iter 8000: loss 5.2522, time 787.85ms, mfu 2.01%, phase: layer_11
+step 8000: train loss 4.9781, val loss 5.0900 (phase: layer_11)
+saving checkpoint to out
+iter 8100: loss 5.0248, time 784.83ms, mfu 2.01%, phase: layer_2
+iter 8200: loss 5.4143, time 785.95ms, mfu 2.01%, phase: layer_5
+iter 8300: loss 4.8206, time 781.78ms, mfu 2.01%, phase: layer_8
+iter 8400: loss 5.3506, time 787.04ms, mfu 2.01%, phase: layer_0
+iter 8500: loss 5.0295, time 784.43ms, mfu 2.01%, phase: layer_3
+iter 8600: loss 5.1486, time 787.51ms, mfu 2.01%, phase: layer_6
+iter 8700: loss 5.2276, time 787.06ms, mfu 2.01%, phase: layer_10
+iter 8800: loss 4.3256, time 786.55ms, mfu 2.01%, phase: layer_1
+
+
+iter 8900: loss 4.2957, time 784.81ms, mfu 2.01%, phase: layer_4
+iter 9000: loss 4.6642, time 784.92ms, mfu 2.01%, phase: layer_7
+step 9000: train loss 4.9241, val loss 5.0244 (phase: layer_8)
+saving checkpoint to out
+iter 9100: loss 4.7685, time 785.44ms, mfu 2.01%, phase: layer_11
+iter 9200: loss 5.4300, time 783.39ms, mfu 2.01%, phase: layer_2
+iter 9300: loss 5.0417, time 782.79ms, mfu 2.01%, phase: layer_5
+iter 9400: loss 4.8714, time 790.94ms, mfu 2.01%, phase: layer_9
+iter 9500: loss 5.3663, time 787.19ms, mfu 2.01%, phase: layer_0
+iter 9600: loss 4.4812, time 787.63ms, mfu 2.00%, phase: layer_3
+iter 9700: loss 5.1055, time 782.29ms, mfu 2.01%, phase: layer_6
+iter 9800: loss 4.5215, time 781.90ms, mfu 2.01%, phase: layer_10
+iter 9900: loss 4.6834, time 788.21ms, mfu 2.01%, phase: layer_1
+iter 10000: loss 5.3985, time 787.77ms, mfu 2.01%, phase: layer_4
+step 10000: train loss 4.8841, val loss 4.9766 (phase: layer_4)
+saving checkpoint to out
+iter 10100: loss 4.6424, time 786.50ms, mfu 2.01%, phase: layer_8
+iter 10200: loss 5.0565, time 785.19ms, mfu 2.01%, phase: layer_11
+iter 10300: loss 4.8051, time 784.54ms, mfu 2.01%, phase: layer_2
+iter 10400: loss 4.9244, time 783.89ms, mfu 2.01%, phase: layer_5
+iter 10500: loss 5.1883, time 788.56ms, mfu 2.01%, phase: layer_9
+iter 10600: loss 4.9713, time 786.18ms, mfu 2.00%, phase: layer_0
+iter 10700: loss 4.8102, time 789.53ms, mfu 2.00%, phase: layer_3
+iter 10800: loss 5.4717, time 786.55ms, mfu 2.00%, phase: layer_7
+iter 10900: loss 4.7855, time 788.49ms, mfu 2.00%, phase: layer_10
+iter 11000: loss 5.1099, time 789.25ms, mfu 2.00%, phase: layer_1
+step 11000: train loss 4.8768, val loss 4.9555 (phase: layer_1)
+saving checkpoint to out
+iter 11100: loss 4.4503, time 790.84ms, mfu 2.00%, phase: layer_4
+iter 11200: loss 4.9557, time 790.20ms, mfu 2.00%, phase: layer_8
+iter 11300: loss 4.3586, time 789.78ms, mfu 2.00%, phase: layer_11
+iter 11400: loss 4.8772, time 788.92ms, mfu 2.00%, phase: layer_2
