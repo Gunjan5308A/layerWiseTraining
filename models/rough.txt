@@ -405,4 +405,4 @@ iter 29900: loss 4.5473, time 394.12ms, mfu 1.26%
 step 30000: train loss 4.4943, val loss 4.6483
 saving checkpoint to out
 iter 30000: loss 4.6169, time 4198.60ms, mfu 1.15%
-(venv) goodname@tuff-guy:~/Goodname/code/nanoGPT$ j 
+(venv) goodname@tuff-guy:~/Goodname/code/nanoGPT$ 
