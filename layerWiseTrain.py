@@ -265,11 +265,11 @@ def get_group_param_indices(optimizer):
     return mapping
 
 
-def set_layer_lrs(optimizer, group_param_indices, active_group_name, base_lr, always_trainable_names):
-    """Set full LR for active group and always-trainable groups, freeze_lr_mult for other layer-wise groups."""
+def set_layer_lrs(optimizer, group_param_indices, active_group_name, base_lr, always_trainable_names, prev_group_name=None):
+    """Set full LR for active group, prev group, and always-trainable groups. freeze_lr_mult for others."""
     for name, indices in group_param_indices.items():
         for i in indices:
-            if name in always_trainable_names or name == active_group_name:
+            if name in always_trainable_names or name == active_group_name or name == prev_group_name:
                 optimizer.param_groups[i]['lr'] = base_lr
             else:
                 optimizer.param_groups[i]['lr'] = base_lr * freeze_lr_mult
@@ -280,6 +280,28 @@ def set_all_lrs(optimizer, group_param_indices, base_lr):
     for name, indices in group_param_indices.items():
         for i in indices:
             optimizer.param_groups[i]['lr'] = base_lr
+
+
+def freeze_layer_params(model, always_trainable_groups, layer_wise_groups, active_group_name=None, prev_group_name=None):
+    """Hard freeze most layers, soft freeze prev layer.
+
+    - Always-trainable (wte, wpe, lm_head, ln_f): requires_grad=True, full LR
+    - Active layer: requires_grad=True, full LR
+    - Previous layer: requires_grad=True, soft freeze LR (momentum continuity)
+    - All others: requires_grad=False (VRAM savings)
+    If active_group_name is None (sync phase), all layers are trainable.
+    """
+    for _, module in layer_wise_groups:
+        for p in module.parameters():
+            p.requires_grad = False
+    for _, module in always_trainable_groups:
+        for p in module.parameters():
+            p.requires_grad = True
+    if active_group_name is not None:
+        for name, module in layer_wise_groups:
+            if name == active_group_name or name == prev_group_name:
+                for p in module.parameters():
+                    p.requires_grad = True
 
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
@@ -346,15 +368,28 @@ checkpoint = None  # free up memory
 # Build param group index mapping
 group_param_indices = get_group_param_indices(optimizer)
 
+# Initial freeze: set requires_grad based on starting state
+if in_sync_phase:
+    freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, active_group_name=None)
+else:
+    prev_idx = (cycle_idx - 1) % len(layer_wise_groups)
+    prev_name = layer_wise_groups[prev_idx][0] if len(layer_wise_groups) > 1 else None
+    freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_wise_groups[cycle_idx][0], prev_name)
+
 while count < max_iters:
 
     if not in_sync_phase:
         # === LAYER-WISE PHASE ===
         layer_name, layer_module = layer_wise_groups[cycle_idx]
+        prev_idx = (cycle_idx - 1) % len(layer_wise_groups)
+        prev_name = layer_wise_groups[prev_idx][0] if len(layer_wise_groups) > 1 else None
 
-        # Set LR: active layer gets full LR, always-trainable groups get full LR, others get freeze_lr_mult
+        # Hard freeze most layers, soft freeze prev layer
+        freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_name, prev_name)
+
+        # Set LR: active layer + prev layer get full LR, always-trainable get full LR, others get freeze_lr_mult
         lr = get_lr(count) if decay_lr else learning_rate
-        set_layer_lrs(optimizer, group_param_indices, layer_name, lr, always_trainable_names)
+        set_layer_lrs(optimizer, group_param_indices, layer_name, lr, always_trainable_names, prev_name)
 
         # evaluate the loss on train/val sets and write checkpoints
         if count % eval_interval == 0 and master_process:
@@ -441,6 +476,9 @@ while count < max_iters:
 
     else:
         # === GLOBAL SYNC PHASE ===
+        # Unfreeze all layers
+        freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, active_group_name=None)
+
         # All layers at full LR
         lr = get_lr(count) if decay_lr else learning_rate
         set_all_lrs(optimizer, group_param_indices, lr)

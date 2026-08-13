@@ -1,11 +1,9 @@
 
-# nanoGPT
-
-![nanoGPT](assets/nanogpt.jpg)
+# LayerWiseTraining
 
 This is a fork of Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGPT) — the simplest, fastest repository for training/finetuning medium-sized GPTs. The original repo reproduces GPT-2 (124M) on OpenWebText. For full documentation on the original codebase, model architecture, and training setup, see the [original README](https://github.com/karpathy/nanoGPT).
 
-**Our addition:** We implemented a **layer-wise training** approach (`layerWiseTrain.py`) that trains transformer layers sequentially with soft-freezing, plus a 64M parameter model configuration for faster experimentation.
+**Our addition:** We implemented a **layer-wise training** approach (`layerWiseTrain.py`) that trains transformer layers sequentially with a hybrid freeze strategy (hard freeze + soft freeze), plus a 64M parameter model configuration for faster experimentation.
 
 ---
 
@@ -13,7 +11,7 @@ This is a fork of Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGP
 
 ### 1. Layer-Wise Training (`layerWiseTrain.py`)
 
-A new training script that trains transformer blocks one at a time in cycles, instead of updating all layers simultaneously every step. This uses **soft-freezing** — inactive layers get a small learning rate multiplier rather than being fully frozen, which preserves AdamW optimizer momentum.
+A new training script that trains transformer blocks one at a time in cycles, instead of updating all layers simultaneously every step. Uses a **hybrid freeze strategy** — the active layer and its immediate predecessor train at full LR (`requires_grad=True`), while all other transformer layers are hard-frozen (`requires_grad=False`) to save VRAM. Embeddings, output head, and final layer norm always train at full LR.
 
 ### 2. 64M Model Config (`config/train_gpt2_64M.py`)
 
@@ -41,46 +39,51 @@ For each step:
     optimizer.step()                  # ALL layers updated
 ```
 
-In **layer-wise training**, we cycle through layers, giving each one focused optimization time while the others are "soft-frozen":
+In **layer-wise training**, we cycle through layers, giving each one focused optimization time while others are hard-frozen (except the prev layer which stays soft-frozen):
 
 ```
 For each layer i in [0, n_layer):
+    freeze_layer_params(active=i, prev=i-1)   # hard freeze all except active+prev
     For step in [0, layer_examples):
-        logits, loss = model(x, y)           # forward pass (all layers active)
-        loss.backward()                       # gradients for all layers
-        optimizer.step()                      # but only layer i gets meaningful update
+        logits, loss = model(x, y)           # forward pass
+        loss.backward()                       # gradients only for active+prev+always-trainable
+        optimizer.step()                      # only active+prev+always-trainable updated
+    sync_steps end-to-end steps               # all layers at full LR
 ```
 
-### Soft-Freezing Math
+### Hybrid Freeze Strategy
 
-Instead of fully freezing layers (setting `requires_grad=False`), we reduce their learning rate:
+We combine hard-freezing (for VRAM savings) with soft-freezing (for momentum continuity):
 
 ```
-lr_j = base_lr               if j == active_layer
-lr_j = base_lr * 0.01        otherwise          # freeze_lr_mult = 0.01
+requires_grad = True,  lr = base_lr          if j == active_layer
+requires_grad = True,  lr = base_lr          if j == prev_layer     # soft freeze
+requires_grad = True,  lr = base_lr          if j in always_trainable
+requires_grad = False, lr = base_lr * 0.01   otherwise              # hard freeze
 ```
 
-**Why not hard-freeze?** AdamW maintains two running averages per parameter:
+**Why hybrid?** Pure soft-freezing (`requires_grad=True` for all) computes gradients for every parameter — no VRAM savings. Pure hard-freezing (`requires_grad=False`) causes cold restarts when layers unfreeze. The hybrid approach gets both:
+
+- **VRAM savings**: 10 of 12 transformer blocks have `requires_grad=False`, so no gradients computed or stored for them (~83% VRAM reduction per step)
+- **Momentum continuity**: The previous layer stays soft-frozen (`requires_grad=True`) so AdamW momentum doesn't decay to zero
+
+**AdamW momentum recap:**
 
 - `m_t = β₁ * m_{t-1} + (1 - β₁) * g_t`  (first moment / momentum)
 - `v_t = β₂ * v_{t-1} + (1 - β₂) * g_t²`  (second moment / adaptive LR)
 
-If you hard-freeze a layer (LR=0), `g_t = 0`, so:
-- `m_t` decays toward zero (momentum dies)
-- `v_t` decays toward zero (adaptive scaling resets)
-
-When you later unfreeze, the optimizer has "forgotten" the gradient history — a **cold restart**. Soft-freezing avoids this by keeping a small `g_t` flowing through the optimizer state.
+If `requires_grad=False`, `g_t = 0`, so momentum decays toward zero — a **cold restart** when unfrozen. The prev layer avoids this.
 
 ### Cycle Structure
 
 One full cycle through all layers:
 
 ```
-Layer 0:  30 steps  (LR for layer 0, 0.01*LR for layers 1-11)
-Layer 1:  30 steps  (LR for layer 1, 0.01*LR for layers 0,2-11)
-Layer 2:  30 steps
+Layer 0:  30 steps  (active: layer 0, prev: layer 11, frozen: layers 1-10)
+Layer 1:  30 steps  (active: layer 1, prev: layer 0,  frozen: layers 2-11)
+Layer 2:  30 steps  (active: layer 2, prev: layer 1,  frozen: layers 0,3-11)
 ...
-Layer 11: 30 steps
+Layer 11: 30 steps  (active: layer 11, prev: layer 10, frozen: layers 0-9)
 Sync:      5 steps  (all layers at full LR)
 ```
 
@@ -90,13 +93,15 @@ The **sync phase** runs a few end-to-end steps where all layers train at full LR
 
 ### Always-Trainable Groups
 
-Three components never get soft-frozen — they train at full LR throughout:
+Three components always have `requires_grad=True` and train at full LR — they are never frozen:
 
 | Group | Parameters | Why |
 |-------|-----------|-----|
 | `wte` + `lm_head` | Token embeddings + output projection | Tied weights, needed for vocabulary alignment |
 | `wpe` | Position embeddings | Must track sequence position for all layers |
 | `ln_f` | Final layer norm | Normalizes output before logits |
+
+Additionally, the **previous layer** (relative to the active layer) always has `requires_grad=True` at full LR to maintain AdamW momentum continuity.
 
 ### Single Global Optimizer
 
@@ -171,9 +176,11 @@ python layerWiseTrain.py --layer_examples=50 --freeze_lr_mult=0.05 --max_iters=5
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `layer_examples` | 30 | Optimizer steps per layer per cycle |
-| `freeze_lr_mult` | 0.01 | LR multiplier for soft-frozen layers |
+| `freeze_lr_mult` | 0.01 | LR multiplier for soft-frozen layers (used for optimizer state only) |
 | `sync_steps` | 5 | End-to-end steps after each full cycle |
 | `compile` | False | Disabled because param group LR changes trigger recompilation |
+
+**VRAM note**: Only 2-3 transformer blocks have `requires_grad=True` at any time (active + prev + always-trainable). The other 10 blocks are hard-frozen with no gradients computed, saving ~83% of transformer VRAM per step.
 
 ### Standard Training (for comparison)
 
