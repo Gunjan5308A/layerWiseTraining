@@ -211,6 +211,22 @@ Training a 64M parameter model on OpenWebText:
 
 The layer-wise approach converges but with different dynamics — each layer gets focused optimization time, and the sync phases re-align them.
 
+### VRAM Measurement
+
+Both scripts track peak GPU VRAM usage and print a summary at the end of training:
+
+**`train.py`:**
+```
+Peak VRAM: 4.23 GB
+```
+
+**`layerWiseTrain.py`:**
+```
+Peak VRAM: 2.87 GB (layer-wise: 2.14 GB, sync: 2.87 GB)
+```
+
+The layer-wise breakdown shows peak VRAM during the layer-wise phase (only active + prev + always-trainable layers have gradients) vs the sync phase (all layers active). This demonstrates the VRAM savings from the hybrid freeze strategy — the layer-wise phase uses significantly less memory than standard training.
+
 ---
 
 ## File Changes from Original nanoGPT
@@ -223,7 +239,7 @@ The layer-wise approach converges but with different dynamics — each layer get
 | `n_tokens.py` | **New** | Token counting utility |
 | `README.md` | **Modified** | Added layer-wise training docs |
 | `model.py` | Unchanged | Original GPT model definition |
-| `train.py` | Unchanged | Original training loop |
+| `train.py` | **Modified** | Added peak VRAM tracking |
 | `sample.py` | Unchanged | Original sampling script |
 
 ---

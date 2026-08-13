@@ -200,6 +200,10 @@ if block_size < model.config.block_size:
     model_args['block_size'] = block_size
 model.to(device)
 
+# peak VRAM tracking
+if device_type == 'cuda':
+    torch.cuda.reset_peak_memory_stats(device)
+
 # initialize a GradScaler. If enabled=False scaler is a no-op
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
@@ -341,6 +345,9 @@ t0 = time.time()
 local_iter_num = 0
 raw_model = model.module if ddp else model
 running_mfu = -1.0
+peak_vram = 0
+layerwise_peak_vram = 0
+sync_peak_vram = 0
 
 # Build layer groups
 always_trainable_groups, layer_wise_groups = get_layer_groups(raw_model)
@@ -459,6 +466,9 @@ while count < max_iters:
             if local_iter_num >= 5:
                 mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
                 running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+            if device_type == 'cuda':
+                peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
+                layerwise_peak_vram = max(layerwise_peak_vram, torch.cuda.max_memory_allocated(device))
             print(f"iter {count}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%, phase: {layer_name}")
             loss_data.append(lossf)
 
@@ -552,6 +562,9 @@ while count < max_iters:
             if local_iter_num >= 5:
                 mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
                 running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+            if device_type == 'cuda':
+                peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
+                sync_peak_vram = max(sync_peak_vram, torch.cuda.max_memory_allocated(device))
             print(f"iter {count}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%, phase: sync")
             loss_data.append(lossf)
 
@@ -576,6 +589,8 @@ if master_process:
     plt.legend()
     plt.savefig('loss_plot.png')
     print("Loss plot saved to loss_plot.png")
+    if device_type == 'cuda':
+        print(f"Peak VRAM: {peak_vram / 1e9:.2f} GB (layer-wise: {layerwise_peak_vram / 1e9:.2f} GB, sync: {sync_peak_vram / 1e9:.2f} GB)")
 
 if ddp:
     destroy_process_group()
