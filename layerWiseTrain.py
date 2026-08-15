@@ -587,7 +587,7 @@ if master_process:
     plt.ylabel('Loss')
     plt.title('Training Loss over Iterations (Layer-Wise)')
     plt.legend()
-    plt.savefig('loss_plot.png')
+    plt.savefig('layerTrain/loss_plot.png')
     print("Loss plot saved to loss_plot.png")
     if device_type == 'cuda':
         print(f"Peak VRAM: {peak_vram / 1e9:.2f} GB (layer-wise: {layerwise_peak_vram / 1e9:.2f} GB, sync: {sync_peak_vram / 1e9:.2f} GB)")

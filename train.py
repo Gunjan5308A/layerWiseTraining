@@ -353,7 +353,7 @@ while True:
         plt.ylabel('Loss')
         plt.title('Training Loss over Iterations')
         plt.legend()
-        plt.savefig('loss_plot.png')
+        plt.savefig('layerTrain/loss_plot.png')
         break
 
 if ddp:
