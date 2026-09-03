@@ -512,6 +512,7 @@ while count < max_iters:
             peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
             layerwise_peak_vram = max(layerwise_peak_vram, torch.cuda.max_memory_allocated(device))
         print(f"  iter {count}: loss {lossf:.4f} dt {dt*1000:.0f}ms [{layer_name}] cycle {cycle_num}/{step_in_group}")
+        log_csv(count, lossf, float('nan'), lr, layer_name, time.time() - t0, peak_vram / 1e9 if device_type == 'cuda' else 0, 'train')
 
     local_iter_num += 1
 

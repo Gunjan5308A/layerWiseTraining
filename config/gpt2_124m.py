@@ -1,5 +1,6 @@
-# Config: GPT-2 (124M) — 4GB VRAM fit
-# Effective batch: 1 * 1024 * 32 = 32,768 tokens/step (~33K)
+# Config: GPT-2 (124M) — 4GB VRAM, 2 epochs over 1.5B tokens
+# Effective batch: 1 * 1024 * 32 = 32,768 tokens/step
+# Total tokens: 32,768 * 91,553 ≈ 3B (2 epochs × 1.5B)
 
 # data
 dataset = 'fineweb5b'
@@ -16,23 +17,30 @@ n_embd = 768
 dropout = 0.0
 
 # optimizer
-learning_rate = 6e-4
+learning_rate = 1e-4
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0
 
-# lr schedule (~33K tokens/step * 2670 steps = ~88M tokens; fineweb5b has 1.5B)
-max_iters = 2670
-lr_decay_iters = 2670
-warmup_iters = 133
-min_lr = 6e-5
+# lr schedule (2 epochs = ~91K steps)
+max_iters = 91553
+lr_decay_iters = 91553
+warmup_iters = 1000
+min_lr = 1e-5
 decay_lr = True
 
+# layer-wise training
+layer_examples = 10
+freeze_lr_mult = 0.1
+lr_ramp_steps = 5
+lr_ramp_start = 0.5
+loss_stop_thresh = 1e-4
+
 # eval & logging
-eval_interval = 250
-eval_iters = 100
-log_interval = 5
+eval_interval = 500
+eval_iters = 200
+log_interval = 1
 always_save_checkpoint = True
 
 # performance
