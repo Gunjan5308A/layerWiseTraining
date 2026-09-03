@@ -1,0 +1,2 @@
+iter,train_loss,val_loss,lr,phase,tokens_per_iter
+0,10.9925,10.9977,0.000004,layer_0,32768

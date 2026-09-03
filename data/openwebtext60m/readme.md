@@ -3,6 +3,8 @@
 
 OpenWebText is an open reproduction of OpenAI's WebText dataset (the dataset used to train GPT-2).
 
+**Note:** FineWeb5B (`data/fineweb5b/`) is now the default dataset. See `data/fineweb5b/readme.md`.
+
 ### Data Preparation
 
 After running `python data/openwebtext/prepare.py`:

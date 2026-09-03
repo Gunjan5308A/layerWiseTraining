@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/home/goodname/Goodname/code/nanoGPT/layerWiseTrain.py", line 403, in <module>
+    losses = estimate_loss()
+  File "/home/goodname/Goodname/code/nanoGPT/venv/lib/python3.13/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+  File "/home/goodname/Goodname/code/nanoGPT/layerWiseTrain.py", line 319, in estimate_loss
+    X, Y = get_batch(split)
+           ~~~~~~~~~^^^^^^^
+  File "/home/goodname/Goodname/code/nanoGPT/layerWiseTrain.py", line 142, in get_batch
+    data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+  File "/home/goodname/Goodname/code/nanoGPT/venv/lib/python3.13/site-packages/numpy/_core/memmap.py", line 235, in __new__
+    f_ctx = open(
+        os.fspath(filename),
+        ('r' if mode == 'c' else mode) + 'b'
+    )
+FileNotFoundError: [Errno 2] No such file or directory: 'data/openwebtext/train.bin'

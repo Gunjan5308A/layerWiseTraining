@@ -2,7 +2,7 @@
 set -e
 
 echo "=== Step 1: Data Preparation ==="
-python data/openwebtext/prepare.py
+python data/fineweb5b/prepare.py
 
 echo ""
 echo "=== Step 2: Training ==="

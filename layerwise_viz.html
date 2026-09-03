@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Layer-Wise Training — Architecture Viz</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;padding:20px}
+  h1{text-align:center;color:#58a6ff;margin-bottom:6px;font-size:1.5em}
+  .sub{text-align:center;color:#8b949e;margin-bottom:20px;font-size:.9em}
+  .wrap{max-width:1100px;margin:0 auto}
+
+  .legend{display:flex;gap:18px;justify-content:center;margin-bottom:20px;flex-wrap:wrap}
+  .legend-i{display:flex;align-items:center;gap:5px;font-size:.82em}
+  .legend-b{width:15px;height:15px;border-radius:3px}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+  .card h2{font-size:.95em;margin-bottom:6px}
+  .card .d{color:#8b949e;font-size:.82em;line-height:1.5}
+
+  .ctrls{text-align:center;margin-bottom:16px}
+  .btn{background:#238636;color:#fff;border:none;padding:9px 22px;border-radius:6px;cursor:pointer;font-size:.9em;margin:0 3px}
+  .btn:hover{background:#2ea043}
+  .btn.stop{background:#da3633}.btn.stop:hover{background:#f85149}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .spd{color:#8b949e;font-size:.82em;margin-right:6px}
+  input[type=range]{width:110px;vertical-align:middle}
+
+  .tl{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:20px;overflow-x:auto}
+  .tl h3{font-size:.9em;color:#58a6ff;margin-bottom:10px}
+  .steps{display:flex;gap:2px;flex-wrap:nowrap}
+  .st{min-width:20px;height:26px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:.6em;font-weight:700;color:#0d1117;transition:all .3s}
+  .st.active{outline:2px solid #f0f6fc;outline-offset:1px}
+  .st.done{opacity:.45}
+
+  .dia{display:flex;flex-direction:column;align-items:center;gap:5px;margin-bottom:20px}
+  .aw{display:flex;gap:10px;margin-bottom:6px}
+  .aw .b{padding:7px 14px;border-radius:5px;font-size:.78em;font-weight:700;text-align:center}
+  .ls{display:flex;flex-direction:column-reverse;gap:3px;width:100%;max-width:700px}
+  .lr{display:flex;align-items:center;gap:8px}
+  .ll{width:55px;text-align:right;font-size:.78em;color:#8b949e;font-family:monospace}
+  .lb{flex:1;height:30px;border-radius:5px;display:flex;align-items:center;padding:0 10px;font-size:.72em;font-weight:700;transition:all .4s ease;border:2px solid transparent}
+  .lb.active{border-color:#f0f6fc;box-shadow:0 0 12px rgba(88,166,255,.4)}
+
+  .lrs{max-width:700px;margin:0 auto}
+  .lrs h3{font-size:.9em;color:#58a6ff;margin-bottom:8px}
+  .lrr{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .lrl{width:55px;text-align:right;font-size:.78em;color:#8b949e;font-family:monospace}
+  .lrbg{flex:1;height:18px;background:#21262d;border-radius:4px;overflow:hidden}
+  .lrb{height:100%;border-radius:4px;transition:width .4s ease,background .4s ease}
+  .lrv{width:70px;font-size:.72em;color:#8b949e;font-family:monospace}
+
+  .ema-box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:20px}
+  .ema-box h3{font-size:.9em;color:#58a6ff;margin-bottom:6px}
+  .ema-box .d{color:#8b949e;font-size:.82em;line-height:1.5}
+  .ema-bar{height:6px;background:#21262d;border-radius:3px;margin-top:8px;overflow:hidden}
+  .ema-fill{height:100%;background:#d2a8ff;width:0;transition:width .4s}
+
+  .info{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:20px}
+  .info h3{font-size:.9em;color:#58a6ff;margin-bottom:6px}
+  .ig{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+  .ii{font-size:.82em}.ii .lb2{color:#8b949e}.ii .vl{color:#f0f6fc;font-family:monospace;font-weight:700}
+
+  .arch{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:20px}
+  .arch h3{font-size:.9em;color:#58a6ff;margin-bottom:8px}
+  .arch pre{color:#8b949e;font-size:.78em;line-height:1.6;overflow-x:auto}
+  .arch .hl{color:#3fb950;font-weight:700}
+  .arch .hl2{color:#d2a8ff;font-weight:700}
+  .arch .dim{color:#484f58}
+
+  @media(max-width:700px){.cards{grid-template-columns:1fr}.aw{flex-direction:column;align-items:center}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Layer-Wise Training Architecture</h1>
+  <p class="sub">nanoGPT — 1 active layer (LR ramp 50%→100%) + 1 prev layer (10% LR) + 10 frozen layers per step</p>
+
+  <div class="legend">
+    <div class="legend-i"><div class="legend-b" style="background:#3fb950"></div> Active (LR ramp 50%→100%)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#1f6feb"></div> Prev (10% LR, soft freeze)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#484f58"></div> Frozen (0 LR, requires_grad=False)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#d2a8ff"></div> Always trainable (wte, wpe, ln_f)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#f0883e"></div> EMA sync (end of cycle)</div>
+  </div>
+
+  <div class="cards">
+    <div class="card" id="c1">
+      <h2 style="color:#3fb950">Layer-Wise Phase</h2>
+      <div class="d">
+        Each of 12 layers trains for <strong>10 steps</strong> at a time.<br>
+        &#8226; Active layer: <strong>requires_grad=True</strong>, LR ramps 50%→100% over 5 steps<br>
+        &#8226; Previous layer: <strong>requires_grad=True</strong>, 10% LR (soft freeze)<br>
+        &#8226; All others: <strong>requires_grad=False</strong>, LR=0 (hard frozen)<br>
+        &#8226; wte, wpe, ln_f: always full LR<br>
+        &#8226; 120 steps per full cycle (12 layers &times; 10 steps)
+      </div>
+    </div>
+    <div class="card" id="c2">
+      <h2 style="color:#f0883e">EMA Sync (end of cycle)</h2>
+      <div class="d">
+        After all 12 layers train once, <strong>EMA sync</strong> runs.<br>
+        &#8226; Each inactive layer blended toward nearest trained layer<br>
+        &#8226; <code>w = 0.99 &times; w + 0.01 &times; trained_w</code><br>
+        &#8226; <strong>No full unfreeze</strong> &mdash; VRAM stays flat<br>
+        &#8226; Zero extra gradient tensors<br>
+        &#8226; Then cycle resets to layer 0
+      </div>
+    </div>
+  </div>
+
+  <div class="ctrls">
+    <button class="btn" id="bp" onclick="start()">&#9654; Play</button>
+    <button class="btn stop" id="bs" onclick="stop()" disabled>&#9632; Stop</button>
+    <button class="btn" id="br" onclick="reset()">&#8634; Reset</button>
+    <span class="spd">Speed:</span>
+    <input type="range" id="spd" min="80" max="1200" value="500" step="80">
+    <span id="sv" style="color:#8b949e;font-size:.82em">500ms</span>
+  </div>
+
+  <div class="tl">
+    <h3>Training Timeline (one cycle = 120 steps + EMA)</h3>
+    <div class="steps" id="tsteps"></div>
+  </div>
+
+  <div class="dia">
+    <div class="aw">
+      <div class="b" style="background:#d2a8ff;color:#0d1117">wte</div>
+      <div class="b" style="background:#d2a8ff;color:#0d1117">wpe</div>
+      <div class="b" style="background:#d2a8ff;color:#0d1117">ln_f</div>
+    </div>
+    <div class="ls" id="lstack"></div>
+  </div>
+
+  <div class="lrs">
+    <h3>Learning Rate per Layer (active ramps 50%→100%)</h3>
+    <div id="lrbars"></div>
+  </div>
+
+  <div class="ema-box" id="emabox" style="display:none">
+    <h3 style="color:#f0883e">EMA Sync Active</h3>
+    <div class="d">Blending all layers toward nearest trained layer... VRAM unchanged.</div>
+    <div class="ema-bar"><div class="ema-fill" id="emafill"></div></div>
+  </div>
+
+  <div class="arch">
+    <h3>Architecture Summary</h3>
+    <pre>
+<span class="hl">ALGORITHM</span>
+<span class="dim">──────────────────────────────────────────────────</span>
+  for each cycle:
+    for layer <span class="hl">i</span> in [0..11]:
+      <span class="hl">L{i}</span>   = <span class="hl">ACTIVE</span>  (requires_grad=True,  LR = <span class="hl">6e-4</span> * ramp)
+      <span class="hl2">L{i-1}</span> = <span class="hl2">SOFT</span>    (requires_grad=True,  LR = <span class="hl2">6e-5</span>  10%)
+      all others = <span class="dim">FROZEN</span> (requires_grad=False, LR = <span class="dim">0</span>)
+      run 10 optimizer steps (LR ramp 50%→100% over first 5)
+
+    <span class="hl2">EMA sync</span>: each layer w = 0.99*w + 0.01*nearest_trained_w
+    reset to layer 0, repeat
+
+<span class="hl">VRAM BREAKDOWN</span> <span class="dim">(per training step)</span>
+<span class="dim">──────────────────────────────────────────────────</span>
+  Gradients:  only <span class="hl">2 layers</span> (active + prev) = ~4.5M params
+  Optimizer:  only <span class="hl">2 layers</span> (AdamW state = 2x mem)
+  Activations: 1 micro-batch at a time (batch_size=1)
+  Total:       <span class="hl">~1.2 GB peak</span> on 4GB VRAM GPU
+
+<span class="hl">COMPARED TO OLD LOGIC</span>
+<span class="dim">──────────────────────────────────────────────────</span>
+  Old: soft-freeze ALL 11 inactive layers at <span class="dim">1% LR</span>
+       → gradients computed for all layers (wasteful)
+       → global sync phase: unfreeze ALL, full LR
+       → <span class="dim">VRAM spikes during sync</span>
+
+  New: hard-freeze 10 layers (LR=0, no grads)
+       prev layer at <span class="hl2">10% LR</span> (keeps momentum)
+       active layer LR ramp <span class="hl">50%→100%</span> (prevents loss spike)
+       EMA sync instead of full unfreeze
+       → <span class="hl">VRAM stays flat entire training</span>
+
+<span class="hl">EARLY STOPPING</span>
+<span class="dim">──────────────────────────────────────────────────</span>
+  Stop when val loss &lt;= <span class="hl">1e-4</span>
+    </pre>
+  </div>
+
+  <div class="info">
+    <h3>Current State</h3>
+    <div class="ig">
+      <div class="ii"><span class="lb2">Cycle: </span><span class="vl" id="ic">—</span></div>
+      <div class="ii"><span class="lb2">Step in layer: </span><span class="vl" id="is">—</span></div>
+      <div class="ii"><span class="lb2">Active layer: </span><span class="vl" id="ia">—</span></div>
+      <div class="ii"><span class="lb2">Total steps: </span><span class="vl" id="it">0</span></div>
+      <div class="ii"><span class="lb2">freeze_lr_mult: </span><span class="vl">0.1 (10%)</span></div>
+      <div class="ii"><span class="lb2">LR ramp: </span><span class="vl" id="iramp">50%→100% over 5 steps</span></div>
+      <div class="ii"><span class="lb2">EMA decay: </span><span class="vl">0.99</span></div>
+      <div class="ii"><span class="lb2">Loss threshold: </span><span class="vl">1e-4</span></div>
+      <div class="ii"><span class="lb2">Frozen layers: </span><span class="vl" id="ifz">10</span></div>
+      <div class="ii"><span class="lb2">VRAM impact: </span><span class="vl" id="ivr">0 extra</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const NL = 12, LE = 10, CYC = NL * LE;
+
+let ci = 0, sg = 0, tot = 0, running = false, tmr = null;
+
+const lc = [
+  '#3fb950','#56d364','#7ee787',
+  '#f0883e','#d29922','#e3b341',
+  '#f85149','#da3633','#ff7b72',
+  '#79c0ff','#58a6ff','#388bfd'
+];
+
+function spd() {
+  const v = document.getElementById('spd').value;
+  document.getElementById('sv').textContent = v + 'ms';
+  return +v;
+}
+
+function buildTL() {
+  const c = document.getElementById('tsteps');
+  c.innerHTML = '';
+  for (let i = 0; i < NL; i++) {
+    for (let j = 0; j < LE; j++) {
+      const d = document.createElement('div');
+      d.className = 'st';
+      d.style.background = lc[i];
+      d.dataset.l = i;
+      d.title = `Layer ${i}, step ${j+1}/${LE}`;
+      c.appendChild(d);
+    }
+  }
+}
+
+function buildLayers() {
+  const s = document.getElementById('lstack');
+  s.innerHTML = '';
+  for (let i = 0; i < NL; i++) {
+    const r = document.createElement('div');
+    r.className = 'lr';
+    r.innerHTML = `<span class="ll">L${i}</span><div class="lb" id="bar${i}" style="background:#484f58;color:#8b949e">Layer ${i}</div>`;
+    s.appendChild(r);
+  }
+}
+
+function buildLR() {
+  const c = document.getElementById('lrbars');
+  c.innerHTML = '';
+  for (let i = 0; i < NL; i++) {
+    const r = document.createElement('div');
+    r.className = 'lrr';
+    r.innerHTML = `<span class="lrl">L${i}</span><div class="lrbg"><div class="lrb" id="lr${i}"></div></div><span class="lrv" id="lv${i}">0%</span>`;
+    c.appendChild(r);
+  }
+}
+
+function prevIdx() { return (ci - 1 + NL) % NL; }
+
+function update() {
+  // Timeline
+  const sts = document.querySelectorAll('#tsteps .st');
+  sts.forEach((s, idx) => {
+    s.classList.remove('active', 'done');
+    if (idx < tot) s.classList.add('done');
+    else if (idx === tot) s.classList.add('active');
+  });
+
+  const p = prevIdx();
+
+  // Layer bars
+  for (let i = 0; i < NL; i++) {
+    const b = document.getElementById(`bar${i}`);
+    b.classList.remove('active');
+    if (i === ci) {
+      const rampPct = Math.min(sg / 5, 1.0);
+      const lrPct = 50 + 50 * rampPct;
+      b.style.background = '#3fb950'; b.style.color = '#0d1117';
+      b.textContent = `Layer ${i} — ACTIVE (LR: ${lrPct.toFixed(0)}%)`;
+      b.classList.add('active');
+    } else if (i === p) {
+      b.style.background = '#1f6feb'; b.style.color = '#c9d1d9';
+      b.textContent = `Layer ${i} — soft-frozen (10% LR)`;
+    } else {
+      b.style.background = '#484f58'; b.style.color = '#8b949e';
+      b.textContent = `Layer ${i} — hard-frozen`;
+    }
+  }
+
+  // LR bars
+  for (let i = 0; i < NL; i++) {
+    const bar = document.getElementById(`lr${i}`);
+    const val = document.getElementById(`lv${i}`);
+    let pct, color;
+    if (i === ci) {
+      const rampPct = Math.min(sg / 5, 1.0);
+      pct = 50 + 50 * rampPct;
+      color = '#3fb950';
+    } else if (i === p) { pct = 10; color = '#1f6feb'; }
+    else { pct = 0; color = '#484f58'; }
+    bar.style.width = Math.max(pct, 2) + '%';
+    bar.style.background = color;
+    val.textContent = pct === 100 ? '100%' : pct === 10 ? '10%' : pct === 0 ? '0%' : pct.toFixed(0) + '%';
+  }
+
+  // Info
+  document.getElementById('ic').textContent = Math.floor(tot / CYC);
+  document.getElementById('is').textContent = `${sg}/${LE}`;
+  document.getElementById('ia').textContent = `L${ci}`;
+  document.getElementById('ia').style.color = '#3fb950';
+  document.getElementById('it').textContent = tot;
+  document.getElementById('ifz').textContent = NL - 2;
+
+  // EMA box
+  document.getElementById('emabox').style.display = 'none';
+
+  // Cards
+  document.getElementById('c1').style.borderColor = '#3fb950';
+  document.getElementById('c2').style.borderColor = '#30363d';
+}
+
+function step() {
+  sg++; tot++;
+  if (sg >= LE) {
+    sg = 0; ci++;
+    if (ci >= NL) {
+      // EMA sync flash
+      document.getElementById('emabox').style.display = 'block';
+      document.getElementById('emafill').style.width = '0%';
+      let w = 0;
+      const iv = setInterval(() => { w += 5; document.getElementById('emafill').style.width = w + '%'; if (w >= 100) clearInterval(iv); }, 30);
+      setTimeout(() => { document.getElementById('emabox').style.display = 'none'; }, 1500);
+      ci = 0;
+    }
+  }
+  update();
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  document.getElementById('bp').disabled = true;
+  document.getElementById('bs').disabled = false;
+  (function tick() { if (!running) return; step(); tmr = setTimeout(tick, spd()); })();
+}
+
+function stop() {
+  running = false; clearTimeout(tmr);
+  document.getElementById('bp').disabled = false;
+  document.getElementById('bs').disabled = true;
+}
+
+function reset() {
+  stop(); ci = 0; sg = 0; tot = 0; update();
+}
+
+document.getElementById('spd').addEventListener('input', spd);
+buildTL(); buildLayers(); buildLR(); update();
+</script>
+</body>
+</html>

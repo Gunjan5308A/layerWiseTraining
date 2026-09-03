@@ -48,9 +48,15 @@ wandb_log = False # disabled by default
 wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
-dataset = 'openwebtext'
-gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
-batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
+dataset = 'fineweb5b'
+dataset_dirs = {
+    'openwebtext': 'data/openwebtext',
+    'fineweb5b': 'data/fineweb5b',
+    'shakespeare': 'data/shakespeare',
+    'shakespeare_char': 'data/shakespeare_char',
+}
+gradient_accumulation_steps = 32 # used to simulate larger batch sizes
+batch_size = 1 # micro-batch size (4GB VRAM safe)
 block_size = 1024
 # model
 n_layer = 12
@@ -74,7 +80,7 @@ min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchi
 backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+dtype = 'float16' # float16 safer on 4GB than bfloat16
 compile = True # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -116,7 +122,7 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # poor man's data loader
-data_dir = os.path.join('data', dataset)
+data_dir = dataset_dirs.get(dataset, os.path.join('data', dataset)) if 'data_dir' not in globals() else globals()['data_dir']
 def get_batch(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
@@ -249,10 +255,18 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
-# logging
-if wandb_log and master_process:
-    import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+# logging (TensorBoard-free: write to log files)
+log_dir = os.path.join(out_dir, 'logs')
+if master_process:
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = open(os.path.join(log_dir, f'log_{wandb_run_name}.txt'), 'w')
+    log_file.write('iter,train_loss,val_loss,lr,phase,tokens_per_iter\n')
+    tb_writer = None  # placeholder for TensorBoard compat
+
+def log_stats(iter_num, train_loss, val_loss, lr, phase):
+    if master_process:
+        log_file.write(f'{iter_num},{train_loss:.4f},{val_loss:.4f},{lr:.6f},{phase},{tokens_per_iter}\n')
+        log_file.flush()
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -273,14 +287,7 @@ while True:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         val_loss_data.append(losses['val'])  # Store validation loss for plotting
-        if wandb_log:
-            wandb.log({
-                "iter": iter_num,
-                "train/loss": losses['train'],
-                "val/loss": losses['val'],
-                "lr": lr,
-                "mfu": running_mfu*100, # convert to percentage
-            })
+        log_stats(iter_num, losses['train'], losses['val'], lr, "train")
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
             if iter_num > 0:

@@ -1,0 +1,20 @@
+{
+  "os":  "Linux-6.17.0-41-generic-x86_64-with-glibc2.42",
+  "python":  "CPython 3.13.7",
+  "startedAt":  "2026-09-02T12:45:09.887723Z",
+  "args":  [
+    "config/gpt2_124m.py"
+  ],
+  "program":  "/home/goodname/Goodname/code/nanoGPT/layerWiseTrain.py",
+  "codePath":  "layerWiseTrain.py",
+  "codePathLocal":  "layerWiseTrain.py",
+  "git":  {
+    "remote":  "https://github.com/Gunjan5308A/layerWiseTraining.git",
+    "commit":  "099213a2feac7d2773b43f39f903a355d8f08521"
+  },
+  "email":  "gunjanthapa5308a@gmail.com",
+  "root":  "/home/goodname/Goodname/code/nanoGPT",
+  "host":  "tuff-guy",
+  "executable":  "/home/goodname/Goodname/code/nanoGPT/venv/bin/python",
+  "writerId":  "7ia0erv5gw82nltbz3jxbqf3fz4kes4j"
+}

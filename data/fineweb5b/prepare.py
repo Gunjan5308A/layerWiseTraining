@@ -1,4 +1,4 @@
-# Extract 5B tokens from the FineWeb dataset (HuggingFaceFW/fineweb, sample-10BT)
+# Extract 1.5B tokens from the FineWeb dataset (HuggingFaceFW/fineweb, sample-10BT)
 # and write them into train.bin / val.bin in the same format train.py expects
 # (single uint16 memmap files, gpt2 BPE encoding, EOT appended per document).
 #
@@ -6,7 +6,7 @@
 #   python data/fineweb5b/prepare.py
 #
 # Output:
-#   data/fineweb5b/train.bin  ~4.99B tokens (~10 GB on disk)
+#   data/fineweb5b/train.bin  ~1.5B tokens (~3 GB on disk)
 #   data/fineweb5b/val.bin    ~10M tokens  (~20 MB on disk)
 #
 # Disk is preallocated so a full extra copy is never needed, and tokenization
@@ -21,7 +21,7 @@ import tiktoken
 from datasets import load_dataset
 from tqdm import tqdm
 
-TARGET_TOKENS = 5_000_000_000  # total tokens pulled from fineweb
+TARGET_TOKENS = 1_500_000_000  # total tokens pulled from fineweb
 VAL_TOKENS = 10_000_000        # ~0.2% of target, held out for eval
 TRAIN_TOKENS = TARGET_TOKENS - VAL_TOKENS
 

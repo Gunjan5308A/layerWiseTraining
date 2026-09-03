@@ -1,32 +1,20 @@
 """
 Layer-wise training script for nanoGPT.
 
-This implements a soft-freezing approach where transformer layers are trained
-sequentially rather than simultaneously. The key insight is that instead of
-fully freezing layers (which loses AdamW momentum), we use a reduced learning
-rate multiplier (freeze_lr_mult) for inactive layers.
-
 Algorithm:
-1. LAYER-WISE PHASE: For each layer i in [0, n_layer):
-   - Set layer i's LR to full learning rate
-   - Set all other layers' LR to lr * freeze_lr_mult (soft freeze)
-   - Always-trainable groups (wte, wpe, ln_f) always get full LR
-   - Run 'layer_examples' optimizer steps
+1. Train one transformer layer at a time:
+   - Active layer: requires_grad=True, LR ramps 50%→100% over first 5 steps
+   - Prev layer: requires_grad=True, 10% LR (0.1x soft freeze)
+   - ALL other layers: requires_grad=False, LR=0 (hard frozen)
+   - Always-trainable groups (wte, wpe, ln_f): requires_grad=True, full LR
+   - Each layer trains for 'layer_examples' steps (10), then advance to next layer
 
-2. GLOBAL SYNC PHASE: After completing a full cycle through all layers:
-   - Set ALL layers to full learning rate
-   - Run 'sync_steps' end-to-end steps
-   - This re-aligns all layers and allows co-adaptation
+2. After full cycle through all 12 layers (120 steps total):
+   - EMA sync: blend inactive layers toward trained layers (decay=0.99)
+   - Reset cycle, repeat on next 120-step chunk of data
+   - No global sync phase, no full-model unfreeze. VRAM stays flat.
 
-Why soft-freezing?
-- Fully freezing layers loses AdamW momentum, causing "cold restart" when unfreezing
-- Soft-freezing preserves first/second moment estimates in AdamW
-- The small LR keeps the optimizer state "warm" for each layer
-
-Single global optimizer:
-- All layers share one optimizer (not per-layer optimizers)
-- This preserves AdamW momentum across the entire training process
-- The LR manipulation is done via param_group['lr'] = base_lr * freeze_lr_mult
+3. Early stopping: halt when val loss reaches loss_stop_thresh (1e-4).
 
 Usage (single GPU):
 $ python layerWiseTrain.py --batch_size=32 --compile=False
@@ -40,8 +28,12 @@ import time
 import math
 import pickle
 import inspect
+from datetime import datetime
 from contextlib import nullcontext
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 import numpy as np
 import torch
@@ -50,9 +42,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
-
-loss_data = []
-val_loss_data = []
 
 # -----------------------------------------------------------------------------
 # I/O
@@ -63,14 +52,16 @@ eval_iters = 200
 eval_only = False
 always_save_checkpoint = True
 init_from = 'scratch'
-# wandb logging
-wandb_log = False
-wandb_project = 'owt'
-wandb_run_name = 'gpt2'
 # data
-dataset = 'openwebtext'
-gradient_accumulation_steps = 5 * 8
-batch_size = 12
+dataset = 'fineweb5b'
+dataset_dirs = {
+    'openwebtext': 'data/openwebtext',
+    'fineweb5b': 'data/fineweb5b',
+    'shakespeare': 'data/shakespeare',
+    'shakespeare_char': 'data/shakespeare_char',
+}
+gradient_accumulation_steps = 32
+batch_size = 1
 block_size = 1024
 # model
 n_layer = 12
@@ -94,19 +85,31 @@ min_lr = 6e-5
 backend = 'nccl'
 # system
 device = 'cuda'
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
-compile = False  # compile is disabled by default for layer-wise (freq param changes trigger recompilation)
+dtype = 'float16'
+compile = False
 # layer-wise training settings
-layer_examples = 30  # number of optimizer steps per layer; all layers share the same pre-sampled data
-freeze_lr_mult = 0.01   # LR multiplier for frozen layers (soft freeze)
-sync_steps = 5          # end-to-end steps after each full cycle through all layers
+layer_examples = 10
+freeze_lr_mult = 0.1
+lr_ramp_steps = 5
+lr_ramp_start = 0.5
+loss_stop_thresh = 1e-4
+ema_decay = 0.99
+ema_sync_every_cycle = True
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read())
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
 
-# various inits, derived attributes, I/O setup
+# ── Output stats directory (unique per run) ──────────────────────────────────
+RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
+STATS_DIR = os.path.join('output_stats', RUN_ID)
+os.makedirs(STATS_DIR, exist_ok=True)
+CSV_PATH = os.path.join(STATS_DIR, f'train_log.csv')
+PLOT_PATH = os.path.join(STATS_DIR, 'loss_plot.png')
+SUMMARY_PATH = os.path.join(STATS_DIR, 'run_summary.txt')
+
+# ── DDP setup ────────────────────────────────────────────────────────────────
 ddp = int(os.environ.get('RANK', -1)) != -1
 if ddp:
     init_process_group(backend=backend)
@@ -135,8 +138,8 @@ device_type = 'cuda' if 'cuda' in device else 'cpu'
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# poor man's data loader
-data_dir = os.path.join('data', dataset)
+# ── Data loader ──────────────────────────────────────────────────────────────
+data_dir = dataset_dirs.get(dataset, os.path.join('data', dataset)) if 'data_dir' not in globals() else globals()['data_dir']
 def get_batch(split):
     if split == 'train':
         data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
@@ -204,27 +207,19 @@ model.to(device)
 if device_type == 'cuda':
     torch.cuda.reset_peak_memory_stats(device)
 
-# initialize a GradScaler. If enabled=False scaler is a no-op
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
-# compile the model
 if compile:
     print("compiling the model... (takes a ~minute)")
     unoptimized_model = model
     model = torch.compile(model)
 
-# wrap model into DDP container
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 
 
-# --- Layer groups for layer-wise training ---
+# ── Layer groups ─────────────────────────────────────────────────────────────
 def get_layer_groups(gpt):
-    """Return (always_trainable_groups, layer_wise_groups).
-
-    always_trainable_groups: wte_lm_head, wpe, ln_f - always train at full LR.
-    layer_wise_groups: transformer layers only - trained one at a time.
-    """
     always_trainable = [
         ('wte_lm_head', nn.ModuleList([gpt.transformer.wte, gpt.lm_head])),
         ('wpe', gpt.transformer.wpe),
@@ -237,7 +232,6 @@ def get_layer_groups(gpt):
 
 
 def build_optimizer(model, weight_decay, learning_rate, betas, device_type):
-    """Create a single optimizer with one param group per layer group."""
     always_trainable_groups, layer_wise_groups = get_layer_groups(model)
     param_groups = []
     for name, module in always_trainable_groups + layer_wise_groups:
@@ -259,7 +253,6 @@ def build_optimizer(model, weight_decay, learning_rate, betas, device_type):
 
 
 def get_group_param_indices(optimizer):
-    """Map layer group name -> list of param_group indices."""
     mapping = {}
     for i, pg in enumerate(optimizer.param_groups):
         name = pg['layer_name']
@@ -269,32 +262,22 @@ def get_group_param_indices(optimizer):
     return mapping
 
 
-def set_layer_lrs(optimizer, group_param_indices, active_group_name, base_lr, always_trainable_names, prev_group_name=None):
-    """Set full LR for active group, prev group, and always-trainable groups. freeze_lr_mult for others."""
+def set_layer_lrs(optimizer, group_param_indices, active_group_name, base_lr, always_trainable_names, prev_group_name=None, step_in_group=0):
+    ramp_ratio = min(step_in_group / lr_ramp_steps, 1.0)
+    active_lr_mult = lr_ramp_start + (1.0 - lr_ramp_start) * ramp_ratio
     for name, indices in group_param_indices.items():
         for i in indices:
-            if name in always_trainable_names or name == active_group_name or name == prev_group_name:
-                optimizer.param_groups[i]['lr'] = base_lr
-            else:
+            if name == prev_group_name:
                 optimizer.param_groups[i]['lr'] = base_lr * freeze_lr_mult
-
-
-def set_all_lrs(optimizer, group_param_indices, base_lr):
-    """Set full LR for all layer groups."""
-    for name, indices in group_param_indices.items():
-        for i in indices:
-            optimizer.param_groups[i]['lr'] = base_lr
+            elif name in always_trainable_names:
+                optimizer.param_groups[i]['lr'] = base_lr
+            elif name == active_group_name:
+                optimizer.param_groups[i]['lr'] = base_lr * active_lr_mult
+            else:
+                optimizer.param_groups[i]['lr'] = 0
 
 
 def freeze_layer_params(model, always_trainable_groups, layer_wise_groups, active_group_name=None, prev_group_name=None):
-    """Hard freeze most layers, soft freeze prev layer.
-
-    - Always-trainable (wte, wpe, lm_head, ln_f): requires_grad=True, full LR
-    - Active layer: requires_grad=True, full LR
-    - Previous layer: requires_grad=True, soft freeze LR (momentum continuity)
-    - All others: requires_grad=False (VRAM savings)
-    If active_group_name is None (sync phase), all layers are trainable.
-    """
     for _, module in layer_wise_groups:
         for p in module.parameters():
             p.requires_grad = False
@@ -308,7 +291,53 @@ def freeze_layer_params(model, always_trainable_groups, layer_wise_groups, activ
                     p.requires_grad = True
 
 
-# helps estimate an arbitrarily accurate loss over either split using many batches
+class EMALayerSync:
+    """EMA sync — no VRAM increase. Blends inactive layers toward trained ones."""
+
+    def __init__(self, decay=0.99):
+        self.decay = decay
+        self.ema_weights = {}
+
+    def snapshot(self, raw_model, layer_wise_groups):
+        state = raw_model.state_dict()
+        for name, module in layer_wise_groups:
+            prefix = f"transformer.h.{name.split('_')[1]}."
+            self.ema_weights[name] = {
+                k: state[k].clone() for k in state if k.startswith(prefix)
+            }
+
+    def sync(self, raw_model, layer_wise_groups, trained_layer_names):
+        if not self.ema_weights:
+            return
+        state = raw_model.state_dict()
+        trained_indices = set()
+        for tname in trained_layer_names:
+            trained_indices.add(int(tname.split('_')[1]))
+        for name, module in layer_wise_groups:
+            if name in trained_layer_names:
+                prefix = f"transformer.h.{name.split('_')[1]}."
+                self.ema_weights[name] = {
+                    k: state[k].clone() for k in state if k.startswith(prefix)
+                }
+                continue
+            my_idx = int(name.split('_')[1])
+            nearest = min(trained_indices, key=lambda x: abs(x - my_idx)) if trained_indices else my_idx
+            src_name = f"layer_{nearest}"
+            if src_name not in self.ema_weights:
+                continue
+            prefix = f"transformer.h.{my_idx}."
+            with torch.no_grad():
+                for k in list(state.keys()):
+                    if k.startswith(prefix):
+                        state[k].mul_(self.decay).add_(
+                            self.ema_weights[src_name][k], alpha=1 - self.decay
+                        )
+            self.ema_weights[name] = {
+                k: state[k].clone() for k in state if k.startswith(prefix)
+            }
+
+
+# ── Loss estimation ──────────────────────────────────────────────────────────
 @torch.no_grad()
 def estimate_loss():
     out = {}
@@ -324,7 +353,7 @@ def estimate_loss():
     model.train()
     return out
 
-# learning rate decay scheduler (cosine with warmup)
+
 def get_lr(it):
     if it < warmup_iters:
         return learning_rate * (it + 1) / (warmup_iters + 1)
@@ -335,262 +364,339 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
 
-# logging
-if wandb_log and master_process:
-    import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
-# --- Layer-wise Training Loop ---
+# ── CSV logging ──────────────────────────────────────────────────────────────
+csv_header_written = False
+if master_process:
+    with open(CSV_PATH, 'w') as f:
+        f.write('step,train_loss,val_loss,lr,layer,wall_time,peak_vram_gb,phase\n')
+
+def log_csv(step, train_loss, val_loss, lr, layer, wall_time, vram_gb, phase):
+    if master_process:
+        with open(CSV_PATH, 'a') as f:
+            f.write(f'{step},{train_loss:.6f},{val_loss:.6f},{lr:.8f},{layer},{wall_time:.1f},{vram_gb:.4f},{phase}\n')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TRAINING LOOP
+# ══════════════════════════════════════════════════════════════════════════════
 t0 = time.time()
 local_iter_num = 0
 raw_model = model.module if ddp else model
 running_mfu = -1.0
 peak_vram = 0
 layerwise_peak_vram = 0
-sync_peak_vram = 0
 
-# Build layer groups
+# Data accumulators
+all_steps = []
+all_train_loss = []
+all_val_loss = []
+all_lr = []
+all_layers = []
+all_vram = []
+all_wall = []
+all_cycle = []
+all_step_in_cycle = []
+
 always_trainable_groups, layer_wise_groups = get_layer_groups(raw_model)
 always_trainable_names = [name for name, _ in always_trainable_groups]
+n_layers = len(layer_wise_groups)
 
-count = iter_num  # total optimizer steps taken (used for LR decay, eval, etc.)
-
-# Build single global optimizer
+count = iter_num
 optimizer = build_optimizer(raw_model, weight_decay, learning_rate, (beta1, beta2), device_type)
+ema_sync = EMALayerSync(decay=ema_decay)
 
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
     cycle_idx = checkpoint.get('cycle_idx', 0)
     step_in_group = checkpoint.get('step_in_group', 0)
-    in_sync_phase = checkpoint.get('in_sync_phase', False)
-    sync_step = checkpoint.get('sync_step', 0)
 else:
-    cycle_idx = 0          # which layer group in current cycle
-    step_in_group = 0      # steps within current layer group
-    in_sync_phase = False  # are we in the sync phase?
-    sync_step = 0          # steps within sync phase
+    cycle_idx = 0
+    step_in_group = 0
 
-checkpoint = None  # free up memory
-
-# Build param group index mapping
+checkpoint = None
 group_param_indices = get_group_param_indices(optimizer)
 
-# Initial freeze: set requires_grad based on starting state
-if in_sync_phase:
-    freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, active_group_name=None)
-else:
-    prev_idx = (cycle_idx - 1) % len(layer_wise_groups)
-    prev_name = layer_wise_groups[prev_idx][0] if len(layer_wise_groups) > 1 else None
-    freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_wise_groups[cycle_idx][0], prev_name)
+# Initial freeze
+prev_idx = (cycle_idx - 1) % n_layers
+prev_name = layer_wise_groups[prev_idx][0] if n_layers > 1 else None
+freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_wise_groups[cycle_idx][0], prev_name)
+
+cycle_num = count // (n_layers * layer_examples)  # which full cycle we're in
+
+print(f"Training {n_layers} layers x {layer_examples} steps each = {n_layers * layer_examples} steps/cycle")
+print(f"Run ID: {RUN_ID}")
+print(f"Stats dir: {STATS_DIR}")
 
 while count < max_iters:
 
-    if not in_sync_phase:
-        # === LAYER-WISE PHASE ===
-        layer_name, layer_module = layer_wise_groups[cycle_idx]
-        prev_idx = (cycle_idx - 1) % len(layer_wise_groups)
-        prev_name = layer_wise_groups[prev_idx][0] if len(layer_wise_groups) > 1 else None
+    layer_name, layer_module = layer_wise_groups[cycle_idx]
+    prev_idx = (cycle_idx - 1) % n_layers
+    prev_name = layer_wise_groups[prev_idx][0] if n_layers > 1 else None
 
-        # Hard freeze most layers, soft freeze prev layer
-        freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_name, prev_name)
+    freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_name, prev_name)
 
-        # Set LR: active layer + prev layer get full LR, always-trainable get full LR, others get freeze_lr_mult
-        lr = get_lr(count) if decay_lr else learning_rate
-        set_layer_lrs(optimizer, group_param_indices, layer_name, lr, always_trainable_names, prev_name)
+    lr = get_lr(count) if decay_lr else learning_rate
+    set_layer_lrs(optimizer, group_param_indices, layer_name, lr, always_trainable_names, prev_name, step_in_group)
 
-        # evaluate the loss on train/val sets and write checkpoints
-        if count % eval_interval == 0 and master_process:
-            losses = estimate_loss()
-            print(f"step {count}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f} (phase: {layer_name})")
-            val_loss_data.append(losses['val'])
-            if wandb_log:
-                wandb.log({
-                    "iter": count,
-                    "train/loss": losses['train'],
-                    "val/loss": losses['val'],
-                    "lr": lr,
-                    "mfu": running_mfu*100,
-                    "phase": layer_name,
-                })
-            if losses['val'] < best_val_loss or always_save_checkpoint:
-                best_val_loss = losses['val']
-                if count > 0:
-                    checkpoint = {
-                        'model': raw_model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'model_args': model_args,
-                        'iter_num': count,
-                        'best_val_loss': best_val_loss,
-                        'config': config,
-                        'cycle_idx': cycle_idx,
-                        'step_in_group': step_in_group,
-                        'in_sync_phase': in_sync_phase,
-                        'sync_step': sync_step,
-                    }
-                    print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-        if count == 0 and eval_only:
+    # Evaluate
+    if count % eval_interval == 0 and master_process:
+        losses = estimate_loss()
+        wall = time.time() - t0
+        vram_gb = torch.cuda.max_memory_allocated(device) / 1e9 if device_type == 'cuda' else 0
+        print(f"step {count}: train {losses['train']:.4f} val {losses['val']:.4f} [{layer_name}] cycle {cycle_num} ({wall:.0f}s)")
+        all_steps.append(count)
+        all_train_loss.append(losses['train'])
+        all_val_loss.append(losses['val'])
+        all_lr.append(lr)
+        all_layers.append(layer_name)
+        all_vram.append(vram_gb)
+        all_wall.append(wall)
+        all_cycle.append(cycle_num)
+        all_step_in_cycle.append(step_in_group)
+        log_csv(count, losses['train'], losses['val'], lr, layer_name, wall, vram_gb, 'eval')
+        if losses['val'] <= loss_stop_thresh:
+            print(f"  >> Val loss {losses['val']:.6f} <= {loss_stop_thresh} — stopping early")
             break
+        if losses['val'] < best_val_loss or always_save_checkpoint:
+            best_val_loss = losses['val']
+            if count > 0:
+                checkpoint = {
+                    'model': raw_model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'model_args': model_args,
+                    'iter_num': count,
+                    'best_val_loss': best_val_loss,
+                    'config': config,
+                    'cycle_idx': cycle_idx,
+                    'step_in_group': step_in_group,
+                }
+                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+    if count == 0 and eval_only:
+        break
 
-        # forward backward update with gradient accumulation
-        for micro_step in range(gradient_accumulation_steps):
-            X, Y = get_batch('train')
-            if ddp:
-                model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
-            with ctx:
-                logits, loss = model(X, Y)
-                loss = loss / gradient_accumulation_steps
-            scaler.scale(loss).backward()
+    # Forward-backward
+    for micro_step in range(gradient_accumulation_steps):
+        X, Y = get_batch('train')
+        if ddp:
+            model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
+        with ctx:
+            logits, loss = model(X, Y)
+            loss = loss / gradient_accumulation_steps
+        scaler.scale(loss).backward()
 
-        # clip the gradient
-        if grad_clip != 0.0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(
-                [p for p in raw_model.parameters() if p.requires_grad],
-                grad_clip
-            )
+    if grad_clip != 0.0:
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in raw_model.parameters() if p.requires_grad],
+            grad_clip
+        )
 
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad(set_to_none=True)
 
-        count += 1
-        step_in_group += 1
+    count += 1
+    step_in_group += 1
 
-        # timing and logging
-        t1 = time.time()
-        dt = t1 - t0
-        t0 = t1
-        if count % log_interval == 0 and master_process:
-            lossf = loss.item() * gradient_accumulation_steps
-            if local_iter_num >= 5:
-                mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
-                running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-            if device_type == 'cuda':
-                peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
-                layerwise_peak_vram = max(layerwise_peak_vram, torch.cuda.max_memory_allocated(device))
-            print(f"iter {count}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%, phase: {layer_name}")
-            loss_data.append(lossf)
+    # Timing + per-step log
+    t1 = time.time()
+    dt = t1 - t0
+    t0 = t1
+    if count % log_interval == 0 and master_process:
+        lossf = loss.item() * gradient_accumulation_steps
+        if local_iter_num >= 5:
+            mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
+            running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+        if device_type == 'cuda':
+            peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
+            layerwise_peak_vram = max(layerwise_peak_vram, torch.cuda.max_memory_allocated(device))
+        print(f"  iter {count}: loss {lossf:.4f} dt {dt*1000:.0f}ms [{layer_name}] cycle {cycle_num}/{step_in_group}")
 
-        local_iter_num += 1
+    local_iter_num += 1
 
-        # Advance to next layer group or sync phase
-        if step_in_group >= layer_examples:
-            step_in_group = 0
-            cycle_idx += 1
-            if cycle_idx >= len(layer_wise_groups):
-                # All layers done, enter sync phase
-                in_sync_phase = True
-                sync_step = 0
-                cycle_idx = 0  # reset for next cycle
+    # Advance layer or EMA sync
+    if step_in_group >= layer_examples:
+        step_in_group = 0
+        cycle_idx += 1
+        if cycle_idx >= n_layers:
+            if ema_sync_every_cycle and master_process:
+                ema_sync.snapshot(raw_model, layer_wise_groups)
+                all_names = [n for n, _ in layer_wise_groups]
+                ema_sync.sync(raw_model, layer_wise_groups, all_names)
+                print(f"  >> EMA sync done at step {count}, cycle {cycle_num} complete")
+            cycle_idx = 0
+            cycle_num += 1
 
-    else:
-        # === GLOBAL SYNC PHASE ===
-        # Unfreeze all layers
-        freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, active_group_name=None)
-
-        # All layers at full LR
-        lr = get_lr(count) if decay_lr else learning_rate
-        set_all_lrs(optimizer, group_param_indices, lr)
-
-        # evaluate the loss on train/val sets and write checkpoints
-        if count % eval_interval == 0 and master_process:
-            losses = estimate_loss()
-            print(f"step {count}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f} (phase: sync)")
-            val_loss_data.append(losses['val'])
-            if wandb_log:
-                wandb.log({
-                    "iter": count,
-                    "train/loss": losses['train'],
-                    "val/loss": losses['val'],
-                    "lr": lr,
-                    "mfu": running_mfu*100,
-                    "phase": "sync",
-                })
-            if losses['val'] < best_val_loss or always_save_checkpoint:
-                best_val_loss = losses['val']
-                if count > 0:
-                    checkpoint = {
-                        'model': raw_model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'model_args': model_args,
-                        'iter_num': count,
-                        'best_val_loss': best_val_loss,
-                        'config': config,
-                        'cycle_idx': cycle_idx,
-                        'step_in_group': step_in_group,
-                        'in_sync_phase': in_sync_phase,
-                        'sync_step': sync_step,
-                    }
-                    print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-        if count == 0 and eval_only:
-            break
-
-        # forward backward update with gradient accumulation
-        for micro_step in range(gradient_accumulation_steps):
-            X, Y = get_batch('train')
-            if ddp:
-                model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
-            with ctx:
-                logits, loss = model(X, Y)
-                loss = loss / gradient_accumulation_steps
-            scaler.scale(loss).backward()
-
-        # clip the gradient
-        if grad_clip != 0.0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(
-                [p for p in raw_model.parameters() if p.requires_grad],
-                grad_clip
-            )
-
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)
-
-        count += 1
-        sync_step += 1
-        local_iter_num += 1
-
-        # timing and logging
-        t1 = time.time()
-        dt = t1 - t0
-        t0 = t1
-        if count % log_interval == 0 and master_process:
-            lossf = loss.item() * gradient_accumulation_steps
-            if local_iter_num >= 5:
-                mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
-                running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-            if device_type == 'cuda':
-                peak_vram = max(peak_vram, torch.cuda.max_memory_allocated(device))
-                sync_peak_vram = max(sync_peak_vram, torch.cuda.max_memory_allocated(device))
-            print(f"iter {count}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%, phase: sync")
-            loss_data.append(lossf)
-
-        if sync_step >= sync_steps:
-            in_sync_phase = False
-            sync_step = 0
-
-    # termination conditions
     if count >= max_iters:
         break
 
-# Save loss plot after training
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FINAL EVAL + PLOTS
+# ══════════════════════════════════════════════════════════════════════════════
 if master_process:
-    train_iters = list(range(len(loss_data)))
-    plt.plot(train_iters, loss_data, label='Training Loss', color='blue')
-    if val_loss_data:
-        val_iters = list(range(len(val_loss_data)))
-        plt.plot(val_iters, val_loss_data, label='Validation Loss', color='orange')
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.title('Training Loss over Iterations (Layer-Wise)')
-    plt.legend()
-    plt.savefig('layerTrain/loss_plot.png')
-    print("Loss plot saved to loss_plot.png")
-    if device_type == 'cuda':
-        print(f"Peak VRAM: {peak_vram / 1e9:.2f} GB (layer-wise: {layerwise_peak_vram / 1e9:.2f} GB, sync: {sync_peak_vram / 1e9:.2f} GB)")
+    final_losses = estimate_loss()
+    wall = time.time() - t0
+    vram_gb = peak_vram / 1e9 if device_type == 'cuda' else 0
+
+    # Append final eval
+    all_steps.append(count)
+    all_train_loss.append(final_losses['train'])
+    all_val_loss.append(final_losses['val'])
+    all_lr.append(lr)
+    all_layers.append('final')
+    all_vram.append(vram_gb)
+    all_wall.append(wall)
+    all_cycle.append(cycle_num)
+    all_step_in_cycle.append(0)
+    log_csv(count, final_losses['train'], final_losses['val'], lr, 'final', wall, vram_gb, 'final')
+
+    # ── Amazing plot ─────────────────────────────────────────────────────────
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(3, 1, height_ratios=[3, 1, 1], hspace=0.25)
+
+    # Color palette
+    c_train = '#2196F3'
+    c_val = '#FF9800'
+    c_diff = '#4CAF50'
+    c_lr = '#9C27B0'
+    c_vram = '#F44336'
+
+    # ── Panel 1: Loss curves ─────────────────────────────────────────────────
+    ax1 = fig.add_subplot(gs[0])
+    ax1.plot(all_steps, all_train_loss, color=c_train, linewidth=1.8, alpha=0.9, label='Train Loss', zorder=3)
+    ax1.plot(all_steps, all_val_loss, color=c_val, linewidth=2.2, alpha=1.0, label='Val Loss', zorder=4)
+
+    # Mark cycle boundaries
+    cycle_len = n_layers * layer_examples
+    for c in range(1, cycle_num + 2):
+        boundary = c * cycle_len
+        if boundary <= all_steps[-1] + cycle_len:
+            ax1.axvline(x=boundary, color='gray', linestyle=':', alpha=0.35, linewidth=0.8)
+
+    # Annotate layer transitions within cycles
+    layer_colors = plt.cm.tab20(np.linspace(0, 1, n_layers))
+    for i in range(len(all_steps)):
+        if all_layers[i] != 'final' and all_layers[i] != (all_layers[i-1] if i > 0 else ''):
+            layer_idx = int(all_layers[i].split('_')[1])
+            ax1.axvline(x=all_steps[i], color=layer_colors[layer_idx], alpha=0.15, linewidth=2)
+
+    ax1.set_ylabel('Loss', fontsize=12, fontweight='bold')
+    ax1.set_title('Layer-Wise Training — Loss Curves', fontsize=14, fontweight='bold', pad=12)
+    ax1.legend(fontsize=11, loc='upper right', framealpha=0.9)
+    ax1.tick_params(labelsize=10)
+
+    # ── Panel 2: Train-Val diff ──────────────────────────────────────────────
+    ax2 = fig.add_subplot(gs[1], sharex=ax1)
+    min_len = min(len(all_train_loss), len(all_val_loss))
+    if min_len > 0:
+        diffs = [all_train_loss[i] - all_val_loss[i] for i in range(min_len)]
+        ax2.fill_between(all_steps[:min_len], diffs, alpha=0.3, color=c_diff)
+        ax2.plot(all_steps[:min_len], diffs, color=c_diff, linewidth=1.5, label='Train - Val')
+    ax2.axhline(y=0, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+    ax2.set_ylabel('Loss Gap', fontsize=11, fontweight='bold')
+    ax2.set_title('Generalization Gap', fontsize=12, fontweight='bold', pad=8)
+    ax2.legend(fontsize=10)
+    ax2.tick_params(labelsize=10)
+
+    # ── Panel 3: LR + VRAM ───────────────────────────────────────────────────
+    ax3a = fig.add_subplot(gs[2], sharex=ax1)
+    ax3a.plot(all_steps, all_lr, color=c_lr, linewidth=1.5, alpha=0.9, label='Learning Rate')
+    ax3a.set_ylabel('LR', fontsize=11, fontweight='bold', color=c_lr)
+    ax3a.set_xlabel('Step', fontsize=12, fontweight='bold')
+    ax3a.set_title('Learning Rate & Peak VRAM', fontsize=12, fontweight='bold', pad=8)
+    ax3a.tick_params(labelsize=10, labelcolor=c_lr)
+
+    ax3b = ax3a.twinx()
+    ax3b.plot(all_steps, all_vram, color=c_vram, linewidth=1.5, alpha=0.8, linestyle='--', label='Peak VRAM')
+    ax3b.set_ylabel('VRAM (GB)', fontsize=11, fontweight='bold', color=c_vram)
+    ax3b.tick_params(labelsize=10, labelcolor=c_vram)
+
+    lines1, labels1 = ax3a.get_legend_handles_labels()
+    lines2, labels2 = ax3b.get_legend_handles_labels()
+    ax3a.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc='upper left')
+
+    fig.text(0.99, 0.01, f'Run {RUN_ID} | {count} steps | {cycle_num} cycles | Peak VRAM: {vram_gb:.2f} GB',
+             ha='right', va='bottom', fontsize=9, color='gray', style='italic')
+
+    plt.savefig(PLOT_PATH, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.savefig(os.path.join(STATS_DIR, 'loss_plot.svg'), bbox_inches='tight', facecolor='white')
+    plt.close()
+    print(f"\nPlot saved: {PLOT_PATH}")
+
+    # ── Run summary ──────────────────────────────────────────────────────────
+    with open(SUMMARY_PATH, 'w') as f:
+        f.write(f"Run ID: {RUN_ID}\n")
+        f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+        f.write(f"{'='*60}\n\n")
+        f.write(f"CONFIGURATION\n")
+        f.write(f"{'-'*40}\n")
+        for k, v in sorted(config.items()):
+            f.write(f"  {k}: {v}\n")
+        f.write(f"\nRESULTS\n")
+        f.write(f"{'-'*40}\n")
+        f.write(f"  Total steps: {count}\n")
+        f.write(f"  Total cycles: {cycle_num}\n")
+        f.write(f"  Final train loss: {final_losses['train']:.4f}\n")
+        f.write(f"  Final val loss: {final_losses['val']:.4f}\n")
+        f.write(f"  Best val loss: {best_val_loss:.4f}\n")
+        f.write(f"  Peak VRAM: {vram_gb:.2f} GB\n")
+        f.write(f"  Total time: {wall:.0f}s ({wall/3600:.1f}h)\n")
+        f.write(f"\nLAYER ARCHITECTURE\n")
+        f.write(f"{'-'*40}\n")
+        f.write(f"  n_layer: {n_layer}\n")
+        f.write(f"  n_head: {n_head}\n")
+        f.write(f"  n_embd: {n_embd}\n")
+        f.write(f"  block_size: {block_size}\n")
+        f.write(f"  vocab_size: {meta_vocab_size}\n")
+        f.write(f"  Total params: {sum(p.numel() for p in raw_model.parameters()):,}\n")
+        f.write(f"\nTRAINING STRATEGY\n")
+        f.write(f"{'-'*40}\n")
+        f.write(f"  Method: Layer-wise sequential training\n")
+        f.write(f"  Steps per layer: {layer_examples}\n")
+        f.write(f"  Steps per cycle: {n_layers * layer_examples}\n")
+        f.write(f"  Active layer LR: ramp {lr_ramp_start*100:.0f}%→100% over {lr_ramp_steps} steps ({learning_rate})\n")
+        f.write(f"  Prev layer LR: soft freeze ({freeze_lr_mult*100:.0f}% of base, {learning_rate * freeze_lr_mult:.2e})\n")
+        f.write(f"  Frozen layers: LR=0, requires_grad=False\n")
+        f.write(f"  EMA sync: decay={ema_decay}, every cycle\n")
+        f.write(f"  Early stop: val loss <= {loss_stop_thresh}\n")
+        f.write(f"\nPREVIOUS LOGIC (for reference)\n")
+        f.write(f"{'-'*40}\n")
+        f.write(f"  Old approach: soft-freeze ALL inactive layers at 1% LR (0.01x)\n")
+        f.write(f"  Old sync: global sync phase — unfreeze ALL layers, full LR, N steps\n")
+        f.write(f"  Old VRAM: spiked during global sync (all layers active)\n")
+        f.write(f"  New approach: hard-freeze inactive (LR=0), soft-freeze prev (0.1x LR)\n")
+        f.write(f"  Active LR ramp: {lr_ramp_start*100:.0f}%→100% over {lr_ramp_steps} steps to avoid loss spike\n")
+        f.write(f"  New sync: EMA blend — no unfreeze, no VRAM spike\n")
+        f.write(f"  Key diff: prev layer gets momentum continuity, rest stay dead frozen\n")
+    print(f"Summary saved: {SUMMARY_PATH}")
+
+    print(f"\n{'='*60}")
+    print(f"  DONE — {count} steps, {cycle_num} cycles")
+    print(f"  Train: {final_losses['train']:.4f} | Val: {final_losses['val']:.4f}")
+    print(f"  Peak VRAM: {vram_gb:.2f} GB")
+    print(f"  Stats: {STATS_DIR}")
+    print(f"{'='*60}")
+
+    # ── Clean up old junk ────────────────────────────────────────────────────
+    old_files = [
+        'layerTrain/log.txtt',
+        'layerTrain/loss_plot.png',
+        'layerTrain/loss_diff.png',
+        'layerTrain/sample',
+        'out/logs/log_gpt2-124m-optimal.txt',
+        'out/logs/log_gpt2.txt',
+        'plot_loss.py',
+    ]
+    cleaned = []
+    for f in old_files:
+        if os.path.exists(f):
+            os.remove(f)
+            cleaned.append(f)
+    if cleaned:
+        print(f"Cleaned: {', '.join(cleaned)}")
 
 if ddp:
     destroy_process_group()
