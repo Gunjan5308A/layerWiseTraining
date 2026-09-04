@@ -17,8 +17,8 @@ n_embd = 768
 dropout = 0.0
 
 # optimizer
-learning_rate = 1e-4
-weight_decay = 1e-1
+learning_rate = 1e-5
+weight_decay = 1e-4
 beta1 = 0.9
 beta2 = 0.95
 grad_clip = 1.0
@@ -27,7 +27,7 @@ grad_clip = 1.0
 max_iters = 91553
 lr_decay_iters = 91553
 warmup_iters = 1000
-min_lr = 1e-5
+min_lr = 1e-6
 decay_lr = True
 
 # layer-wise training
@@ -35,7 +35,7 @@ layer_examples = 10
 freeze_lr_mult = 0.1
 lr_ramp_steps = 5
 lr_ramp_start = 0.5
-loss_stop_thresh = 1e-4
+loss_stop_thresh = 1e-6
 
 # eval & logging
 eval_interval = 500

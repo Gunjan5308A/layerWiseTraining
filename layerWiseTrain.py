@@ -8,6 +8,7 @@ Algorithm:
    - ALL other layers: requires_grad=False, LR=0 (hard frozen)
    - Always-trainable groups (wte, wpe, ln_f): requires_grad=True, full LR
    - Each layer trains for 'layer_examples' steps (10), then advance to next layer
+   - Adam state (m, v) reset to zero when layer becomes active
 
 2. After full cycle through all 12 layers (120 steps total):
    - EMA sync: blend inactive layers toward trained layers (decay=0.99)
@@ -291,6 +292,14 @@ def freeze_layer_params(model, always_trainable_groups, layer_wise_groups, activ
                     p.requires_grad = True
 
 
+def reset_optimizer_state(optimizer, module):
+    for p in module.parameters():
+        if p in optimizer.state:
+            state = optimizer.state[p]
+            state['exp_avg'].zero_()
+            state['exp_avg_sq'].zero_()
+
+
 class EMALayerSync:
     """EMA sync — no VRAM increase. Blends inactive layers toward trained ones."""
 
@@ -435,6 +444,9 @@ while count < max_iters:
     prev_name = layer_wise_groups[prev_idx][0] if n_layers > 1 else None
 
     freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer_name, prev_name)
+
+    if step_in_group == 0:
+        reset_optimizer_state(optimizer, layer_module)
 
     lr = get_lr(count) if decay_lr else learning_rate
     set_layer_lrs(optimizer, group_param_indices, layer_name, lr, always_trainable_names, prev_name, step_in_group)
