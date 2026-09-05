@@ -1,52 +1,54 @@
-# Config for training a 64M parameter GPT model on OpenWebText
-# This is a smaller model than GPT-2 (124M) for faster experimentation
-# Total parameters: ~63.52M
-#
-# Usage:
-# python train.py config/train_gpt2_64M.py
-#
-# Or with DDP (multi-GPU):
-# torchrun --standalone --nproc_per_node=4 train.py config/train_gpt2_64M.py
-#
-# Expected training time:
-# - Single GPU: ~10-15 hours for 30K iterations
-# - 4x A100: ~3-4 hours for 30K iterations
-#
-# Expected results after 30K iterations:
-# - Train loss: ~4.49
-# - Val loss: ~4.65
+# Config: GPT-2 (124M) — 4GB VRAM, 1.5 epochs over 1.5B tokens (layer-wise)
+# Effective batch: 1 * 1024 * 32 = 32,768 tokens/step
+# Total tokens: 32,768 * 68,665 ≈ 2.25B (1.5 epochs × 1.5B)
+# Total steps: 68,665 | Cycles: 572 (120 steps/cycle)
 
-wandb_log = False
-wandb_project = 'owt'
-wandb_run_name = 'gpt2-64M'
+# data
+dataset = 'fineweb5b'
 
-# Batch configuration
-# Effective batch size = batch_size * block_size * gradient_accumulation_steps
-# = 1 * 256 * 16 = 4,096 tokens per iteration
+# throughput (4GB VRAM safe)
+block_size = 1024
 batch_size = 1
-block_size = 256
-gradient_accumulation_steps = 16
+gradient_accumulation_steps = 32  # 32,768 tokens/iter
 
-# Training duration
-# 30K iterations * 4,096 tokens = ~123M tokens total
-max_iters = 30000
-lr_decay_iters = 30000
-
-# Evaluation settings
-eval_interval = 1000
-eval_iters = 200
-log_interval = 100
-
-# Optimizer settings
-weight_decay = 1e-1
-learning_rate = 3e-4
-
-# Model architecture
-# 64M params: 12 layers, 8 heads, 512 embedding dim
+# model
 n_layer = 12
-n_head = 8
-n_embd = 512
-dropout = 0.2  # 0.2 for pretraining; 0.0 for finetuning
+n_head = 12
+n_embd = 768
+dropout = 0.2
 
-# System settings
-compile = False  # Set to True for PyTorch 2.0 compilation speedup
+# optimizer (tuned for layer-wise: ~20% params active per step)
+learning_rate = 3e-4
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+
+# lr schedule (1.5 epochs = ~68K steps)
+max_iters = 68665
+lr_decay_iters = 68665
+warmup_iters = 1000
+min_lr = 3e-5
+decay_lr = True
+
+# layer-wise training (loss spike reduction)
+layer_examples = 10
+freeze_lr_mult = 0.1
+lr_ramp_steps = 8
+lr_ramp_start = 0.1
+prev_ramp_steps = 3
+grad_clip_warmup = 0.5
+grad_clip_warmup_steps = 3
+grad_ema_decay = 0.9
+loss_stop_thresh = 1e-4
+save_interval = 1000
+
+# eval & logging
+eval_interval = 500
+eval_iters = 200
+log_interval = 1
+always_save_checkpoint = True
+
+# performance
+compile = False
+dtype = 'float16'

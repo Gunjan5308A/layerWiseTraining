@@ -3,12 +3,15 @@ Layer-wise training script for nanoGPT.
 
 Algorithm:
 1. Train one transformer layer at a time:
-   - Active layer: requires_grad=True, LR ramps 50%→100% over first 5 steps
-   - Prev layer: requires_grad=True, 10% LR (0.1x soft freeze)
+   - Active layer: requires_grad=True, LR ramps 10%→100% over first 8 steps
+   - Prev layer: requires_grad=True, LR ramps 100%→10% over first 3 steps (soft freeze)
    - ALL other layers: requires_grad=False, LR=0 (hard frozen)
    - Always-trainable groups (wte, wpe, ln_f): requires_grad=True, full LR
    - Each layer trains for 'layer_examples' steps (10), then advance to next layer
    - Adam state (m, v) reset to zero when layer becomes active
+   - First step after unfreeze skipped (noisy gradient)
+   - Gradient norm EMA smooths gradient spikes
+   - Dynamic grad_clip: 0.5 for first 3 steps, then 1.0
 
 2. After full cycle through all 12 layers (120 steps total):
    - EMA sync: blend inactive layers toward trained layers (decay=0.99)
@@ -91,11 +94,16 @@ compile = False
 # layer-wise training settings
 layer_examples = 10
 freeze_lr_mult = 0.1
-lr_ramp_steps = 5
-lr_ramp_start = 0.5
+lr_ramp_steps = 8
+lr_ramp_start = 0.1
+prev_ramp_steps = 3
+grad_clip_warmup = 0.5
+grad_clip_warmup_steps = 3
+grad_ema_decay = 0.9
 loss_stop_thresh = 1e-4
 ema_decay = 0.99
 ema_sync_every_cycle = True
+save_interval = 1000
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read())
@@ -266,10 +274,12 @@ def get_group_param_indices(optimizer):
 def set_layer_lrs(optimizer, group_param_indices, active_group_name, base_lr, always_trainable_names, prev_group_name=None, step_in_group=0):
     ramp_ratio = min(step_in_group / lr_ramp_steps, 1.0)
     active_lr_mult = lr_ramp_start + (1.0 - lr_ramp_start) * ramp_ratio
+    prev_down_ratio = min(step_in_group / prev_ramp_steps, 1.0)
+    prev_lr_mult = 1.0 - (1.0 - freeze_lr_mult) * prev_down_ratio
     for name, indices in group_param_indices.items():
         for i in indices:
             if name == prev_group_name:
-                optimizer.param_groups[i]['lr'] = base_lr * freeze_lr_mult
+                optimizer.param_groups[i]['lr'] = base_lr * prev_lr_mult
             elif name in always_trainable_names:
                 optimizer.param_groups[i]['lr'] = base_lr
             elif name == active_group_name:
@@ -395,6 +405,7 @@ raw_model = model.module if ddp else model
 running_mfu = -1.0
 peak_vram = 0
 layerwise_peak_vram = 0
+grad_norm_ema = None
 
 # Data accumulators
 all_steps = []
@@ -483,9 +494,19 @@ while count < max_iters:
                     'cycle_idx': cycle_idx,
                     'step_in_group': step_in_group,
                 }
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                torch.save(checkpoint, os.path.join(out_dir, 'ckpt_eval.pt'))
     if count == 0 and eval_only:
         break
+
+    # Skip first step after unfreeze (noisy gradient)
+    if step_in_group == 0:
+        optimizer.zero_grad(set_to_none=True)
+        count += 1
+        step_in_group += 1
+        local_iter_num += 1
+        if count % log_interval == 0 and master_process:
+            print(f"  iter {count}: [skip — first step after unfreeze] [{layer_name}]")
+        continue
 
     # Forward-backward
     for micro_step in range(gradient_accumulation_steps):
@@ -497,11 +518,30 @@ while count < max_iters:
             loss = loss / gradient_accumulation_steps
         scaler.scale(loss).backward()
 
+    # Gradient norm EMA (scalar — no VRAM increase)
+    if grad_ema_decay < 1.0:
+        with torch.no_grad():
+            total_norm = torch.nn.utils.clip_grad_norm_(
+                [p for p in raw_model.parameters() if p.requires_grad],
+                float('inf')
+            )
+            if grad_norm_ema is None:
+                grad_norm_ema = total_norm.item()
+            else:
+                grad_norm_ema = grad_ema_decay * grad_norm_ema + (1 - grad_ema_decay) * total_norm.item()
+            if total_norm.item() > 0 and grad_norm_ema > 0:
+                scale = min(grad_norm_ema / total_norm.item(), 1.0)
+                for p in raw_model.parameters():
+                    if p.grad is not None:
+                        p.grad.mul_(scale)
+
+    # Dynamic grad_clip: tighter during warmup
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
+        clip = grad_clip_warmup if step_in_group <= grad_clip_warmup_steps else grad_clip
         torch.nn.utils.clip_grad_norm_(
             [p for p in raw_model.parameters() if p.requires_grad],
-            grad_clip
+            clip
         )
 
     scaler.step(optimizer)
@@ -527,6 +567,22 @@ while count < max_iters:
         log_csv(count, lossf, float('nan'), lr, layer_name, time.time() - t0, peak_vram / 1e9 if device_type == 'cuda' else 0, 'train')
 
     local_iter_num += 1
+
+    # Periodic checkpoint save
+    if count % save_interval == 0 and master_process and count > 0:
+        checkpoint = {
+            'model': raw_model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'model_args': model_args,
+            'iter_num': count,
+            'best_val_loss': best_val_loss,
+            'config': config,
+            'cycle_idx': cycle_idx,
+            'step_in_group': step_in_group,
+        }
+        torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{count}.pt'))
+        torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+        print(f"  >> Checkpoint saved at step {count}")
 
     # Advance layer or EMA sync
     if step_in_group >= layer_examples:

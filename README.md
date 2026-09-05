@@ -3,7 +3,7 @@
 
 This is a fork of Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGPT) — the simplest, fastest repository for training/finetuning medium-sized GPTs. The original repo reproduces GPT-2 (124M) on OpenWebText. For full documentation on the original codebase, model architecture, and training setup, see the [original README](https://github.com/karpathy/nanoGPT).
 
-**Our addition:** We implemented a **layer-wise training** approach (`layerWiseTrain.py`) that trains transformer layers sequentially with a hybrid freeze strategy (hard freeze + 10% soft freeze), gradual LR ramp to prevent loss spikes, plus a 64M parameter model configuration for faster experimentation.
+**Our addition:** We implemented a **layer-wise training** approach (`layerWiseTrain.py`) that trains transformer layers sequentially with a hybrid freeze strategy (hard freeze + 10% soft freeze), gradual LR ramp, optimizer state reset, and multiple loss spike reduction techniques — all without increasing VRAM usage.
 
 ---
 
@@ -11,7 +11,7 @@ This is a fork of Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGP
 
 ### 1. Layer-Wise Training (`layerWiseTrain.py`)
 
-A new training script that trains transformer blocks one at a time in cycles, instead of updating all layers simultaneously every step. Uses a **hybrid freeze strategy** — the active layer trains with a gradual LR ramp (50%→100% over 5 steps), its immediate predecessor stays soft-frozen at 10% LR for momentum continuity, and all other transformer layers are hard-frozen (`requires_grad=False`) to save VRAM. Embeddings, output head, and final layer norm always train at full LR. Includes early stopping when validation loss reaches 1e-4.
+A new training script that trains transformer blocks one at a time in cycles, instead of updating all layers simultaneously every step. Uses a **hybrid freeze strategy** — the active layer trains with a gradual LR ramp (10%→100% over 8 steps), its immediate predecessor ramps down (100%→10% over 3 steps) for smooth transition, and all other transformer layers are hard-frozen (`requires_grad=False`) to save VRAM. Includes 5 loss spike reduction techniques: LR ramp, prev ramp-down, skip first step, gradient norm EMA, and dynamic grad clipping. Embeddings, output head, and final layer norm always train at full LR. Early stopping when validation loss reaches threshold.
 
 ### 2. 64M Model Config (`config/train_gpt2_64M.py`)
 
@@ -48,36 +48,44 @@ For each step:
     optimizer.step()                  # ALL layers updated
 ```
 
-In **layer-wise training**, we cycle through layers, giving each one focused optimization time while others are hard-frozen (except the prev layer which stays soft-frozen at 10% LR):
+In **layer-wise training**, we cycle through layers, giving each one focused optimization time while others are hard-frozen (except the prev layer which ramps down from 100% to 10% LR):
 
 ```
 For each layer i in [0, n_layer):
     freeze_layer_params(active=i, prev=i-1)   # hard freeze all except active+prev
+    reset_optimizer_state(active=i)           # zero m, v for clean slate
     For step in [0, layer_examples):
-        lr_mult = 0.5 + 0.5 * min(step / 5, 1)   # ramp 50%→100% over 5 steps
+        if step == 0: skip                    # skip first step (noisy gradient)
+        active_lr = 0.1 + 0.9 * min(step / 8, 1)   # ramp 10%→100% over 8 steps
+        prev_lr = 1.0 - 0.9 * min(step / 3, 1)     # ramp 100%→10% over 3 steps
         logits, loss = model(x, y)           # forward pass
-        loss.backward()                       # gradients only for active+prev+always-trainable
-        optimizer.step()                      # only active+prev+always-trainable updated
+        loss.backward()                       # gradients for active+prev+always-trainable
+        grad_norm_ema = 0.9 * grad_norm_ema + 0.1 * ||grad||  # smooth gradient spikes
+        grads *= min(grad_norm_ema / ||grad||, 1)              # scale down spikes
+        clip = 0.5 if step <= 3 else 1.0      # tighter clip during warmup
+        optimizer.step()                      # update active+prev+always-trainable
 ```
 
 ### Hybrid Freeze Strategy
 
-We combine hard-freezing (for VRAM savings) with soft-freezing (for momentum continuity) and a gradual LR ramp (to prevent loss spikes when a layer becomes active):
+We combine hard-freezing (for VRAM savings) with soft-freezing (for momentum continuity), gradual LR ramps (to prevent loss spikes), and gradient smoothing:
 
 ```
-requires_grad = True,  lr = base_lr * ramp_pct    if j == active_layer  (ramps 50%→100%)
-requires_grad = True,  lr = base_lr * 0.1          if j == prev_layer   (10% soft freeze)
+requires_grad = True,  lr = base_lr * ramp_pct    if j == active_layer  (ramps 10%→100%)
+requires_grad = True,  lr = base_lr * prev_pct    if j == prev_layer   (ramps 100%→10%)
 requires_grad = True,  lr = base_lr                if j in always_trainable
 requires_grad = False, lr = 0                      otherwise            (hard freeze)
 ```
 
-Where `ramp_pct = 0.5 + 0.5 * min(step_in_layer / 5, 1.0)` — linearly increases from 50% to 100% over the first 5 steps of each layer's 10-step cycle.
+Where:
+- `ramp_pct = 0.1 + 0.9 * min(step_in_layer / 8, 1.0)` — linearly increases from 10% to 100% over first 8 steps
+- `prev_pct = 1.0 - 0.9 * min(step_in_layer / 3, 1.0)` — linearly decreases from 100% to 10% over first 3 steps
 
 **Why hybrid?** Pure soft-freezing (`requires_grad=True` for all) computes gradients for every parameter — no VRAM savings. Pure hard-freezing (`requires_grad=False`) causes cold restarts when layers unfreeze. The hybrid approach gets both:
 
 - **VRAM savings**: 10 of 12 transformer blocks have `requires_grad=False`, so no gradients computed or stored for them (~83% VRAM reduction per step)
-- **Momentum continuity**: The previous layer stays soft-frozen (`requires_grad=True`) at 10% LR so AdamW momentum doesn't decay to zero
-- **Stability**: Gradual LR ramp prevents loss spikes when switching active layers
+- **Momentum continuity**: The previous layer ramps down from 100% to 10% LR, maintaining AdamW momentum without sudden drops
+- **Stability**: Multiple techniques prevent loss spikes (see Loss Spike Reduction section below)
 
 **AdamW momentum recap:**
 
@@ -92,14 +100,17 @@ One full cycle through all layers:
 
 ```
 Layer 0:  10 steps  (active: layer 0, prev: layer 11, frozen: layers 1-10)
-          LR ramp: 50%→100% over first 5 steps
+          step 0: skip (noisy gradient)
+          steps 1-8: LR ramp 10%→100%
+          steps 1-3: prev ramp 100%→10%, grad_clip=0.5
+          steps 4-10: prev at 10%, grad_clip=1.0
 Layer 1:  10 steps  (active: layer 1, prev: layer 0,  frozen: layers 2-11)
-          LR ramp: 50%→100% over first 5 steps
+          same pattern...
 Layer 2:  10 steps  (active: layer 2, prev: layer 1,  frozen: layers 0,3-11)
-          LR ramp: 50%→100% over first 5 steps
+          same pattern...
 ...
 Layer 11: 10 steps  (active: layer 11, prev: layer 10, frozen: layers 0-9)
-          LR ramp: 50%→100% over first 5 steps
+          same pattern...
 EMA sync: blend inactive layers toward nearest trained (decay=0.99)
 ```
 
@@ -117,7 +128,27 @@ Three components always have `requires_grad=True` and train at full LR — they 
 | `wpe` | Position embeddings | Must track sequence position for all layers |
 | `ln_f` | Final layer norm | Normalizes output before logits |
 
-Additionally, the **previous layer** (relative to the active layer) always has `requires_grad=True` at 10% LR to maintain AdamW momentum continuity without significant gradient updates.
+Additionally, the **previous layer** (relative to the active layer) always has `requires_grad=True` and ramps down from 100% to 10% LR over 3 steps to maintain AdamW momentum continuity without sudden drops.
+
+### Loss Spike Reduction
+
+Six techniques prevent loss spikes during layer transitions — **all without increasing VRAM**:
+
+| Technique | How It Works | VRAM Cost |
+|-----------|--------------|-----------|
+| **Active LR ramp** | Linearly increase active layer LR from 10%→100% over 8 steps | None |
+| **Prev LR ramp-down** | Linearly decrease prev layer LR from 100%→10% over 3 steps | None |
+| **Skip first step** | Don't step optimizer on `step_in_group == 0` (noisy gradient) | None |
+| **Optimizer state reset** | Zero Adam `m, v` when layer becomes active (clean slate) | None |
+| **Gradient norm EMA** | Scalar EMA of total gradient norm, scale grads by `ema/current` | ~0 (one float) |
+| **Dynamic grad_clip** | Use 0.5 for first 3 steps, then 1.0 | None |
+
+**Why these work:**
+- Layer transitions cause gradient distribution shifts
+- First gradient after unfreeze is often noisy (skip it)
+- Stale optimizer state (m, v) from previous training causes instability (reset it)
+- Large gradient spikes get smoothed by EMA scaling
+- Tighter clipping during warmup prevents overshooting
 
 ### Single Global Optimizer
 
@@ -217,8 +248,12 @@ python train.py config/train_shakespeare_char.py
 | `data_dir` | auto from dataset | Override full path: `--data_dir=/path/to/data` |
 | `layer_examples` | 10 | Optimizer steps per layer per cycle |
 | `freeze_lr_mult` | 0.1 | LR multiplier for soft-frozen prev layer (10% of base LR) |
-| `lr_ramp_steps` | 5 | Steps to ramp active layer LR from 50% to 100% |
-| `lr_ramp_start` | 0.5 | Starting LR multiplier for active layer ramp (50%) |
+| `lr_ramp_steps` | 8 | Steps to ramp active layer LR from 10% to 100% |
+| `lr_ramp_start` | 0.1 | Starting LR multiplier for active layer ramp (10%) |
+| `prev_ramp_steps` | 3 | Steps to ramp prev layer LR from 100% to 10% |
+| `grad_clip_warmup` | 0.5 | Grad clip value during first 3 steps |
+| `grad_clip_warmup_steps` | 3 | Steps to use tighter grad clip |
+| `grad_ema_decay` | 0.9 | EMA decay for gradient norm smoothing |
 | `loss_stop_thresh` | 1e-4 | Stop training when val loss reaches this threshold |
 | `compile` | False | Disabled because param group LR changes trigger recompilation |
 | `dtype` | `float16` | `float16` for 4GB VRAM, `bfloat16` for 8GB+ |
@@ -271,7 +306,7 @@ The layer-wise approach maintains flat VRAM usage throughout training because th
 
 | File | Status | Description |
 |------|--------|-------------|
-| `layerWiseTrain.py` | **Modified** | Layer-wise training script (~700 lines), local CSV logging, LR ramp, early stopping |
+| `layerWiseTrain.py` | **Modified** | Layer-wise training script (~750 lines), local CSV logging, LR ramp, optimizer reset, gradient norm EMA, dynamic grad_clip, early stopping |
 | `train.py` | **Modified** | Added `dataset_dirs` mapping, local CSV logging, VRAM tracking |
 | `config/gpt2_124m.py` | **Modified** | 4GB VRAM optimized config, fineweb5b default |
 | `config/train_gpt2_64M.py` | **New** | 64M model configuration |
@@ -281,7 +316,7 @@ The layer-wise approach maintains flat VRAM usage throughout training because th
 | `model.py` | Unchanged | Original GPT model definition |
 | `sample.py` | Unchanged | Original sampling script |
 
----
+---init
 
 ## License
 

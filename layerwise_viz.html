@@ -76,11 +76,11 @@
 <body>
 <div class="wrap">
   <h1>Layer-Wise Training Architecture</h1>
-  <p class="sub">nanoGPT — 1 active layer (LR ramp 50%→100%) + 1 prev layer (10% LR) + 10 frozen layers per step</p>
+  <p class="sub">nanoGPT — 1 active layer (LR ramp 10%→100%) + 1 prev layer (ramp 100%→10%) + 10 frozen layers per step</p>
 
   <div class="legend">
-    <div class="legend-i"><div class="legend-b" style="background:#3fb950"></div> Active (LR ramp 50%→100%)</div>
-    <div class="legend-i"><div class="legend-b" style="background:#1f6feb"></div> Prev (10% LR, soft freeze)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#3fb950"></div> Active (LR ramp 10%→100%)</div>
+    <div class="legend-i"><div class="legend-b" style="background:#1f6feb"></div> Prev (ramp 100%→10%)</div>
     <div class="legend-i"><div class="legend-b" style="background:#484f58"></div> Frozen (0 LR, requires_grad=False)</div>
     <div class="legend-i"><div class="legend-b" style="background:#d2a8ff"></div> Always trainable (wte, wpe, ln_f)</div>
     <div class="legend-i"><div class="legend-b" style="background:#f0883e"></div> EMA sync (end of cycle)</div>
@@ -91,11 +91,13 @@
       <h2 style="color:#3fb950">Layer-Wise Phase</h2>
       <div class="d">
         Each of 12 layers trains for <strong>10 steps</strong> at a time.<br>
-        &#8226; Active layer: <strong>requires_grad=True</strong>, LR ramps 50%→100% over 5 steps<br>
-        &#8226; Previous layer: <strong>requires_grad=True</strong>, 10% LR (soft freeze)<br>
+        &#8226; Active layer: <strong>requires_grad=True</strong>, LR ramps 10%→100% over 8 steps<br>
+        &#8226; Previous layer: <strong>requires_grad=True</strong>, ramps 100%→10% over 3 steps<br>
         &#8226; All others: <strong>requires_grad=False</strong>, LR=0 (hard frozen)<br>
         &#8226; wte, wpe, ln_f: always full LR<br>
-        &#8226; 120 steps per full cycle (12 layers &times; 10 steps)
+        &#8226; 120 steps per full cycle (12 layers &times; 10 steps)<br>
+        &#8226; <strong>Step 0: skip</strong> (noisy gradient)<br>
+        &#8226; <strong>Steps 1-3:</strong> grad_clip=0.5 (tighter)
       </div>
     </div>
     <div class="card" id="c2">
@@ -135,7 +137,7 @@
   </div>
 
   <div class="lrs">
-    <h3>Learning Rate per Layer (active ramps 50%→100%)</h3>
+    <h3>Learning Rate per Layer (active: 10%→100%, prev: 100%→10%)</h3>
     <div id="lrbars"></div>
   </div>
 
@@ -152,13 +154,27 @@
 <span class="dim">──────────────────────────────────────────────────</span>
   for each cycle:
     for layer <span class="hl">i</span> in [0..11]:
-      <span class="hl">L{i}</span>   = <span class="hl">ACTIVE</span>  (requires_grad=True,  LR = <span class="hl">6e-4</span> * ramp)
-      <span class="hl2">L{i-1}</span> = <span class="hl2">SOFT</span>    (requires_grad=True,  LR = <span class="hl2">6e-5</span>  10%)
+      <span class="hl">L{i}</span>   = <span class="hl">ACTIVE</span>  (requires_grad=True,  LR = base * ramp)
+      <span class="hl2">L{i-1}</span> = <span class="hl2">SOFT</span>    (requires_grad=True,  LR = base * prev_pct)
       all others = <span class="dim">FROZEN</span> (requires_grad=False, LR = <span class="dim">0</span>)
-      run 10 optimizer steps (LR ramp 50%→100% over first 5)
+      <span class="dim">skip step 0</span> (noisy gradient)
+      steps 1-8: active LR ramps <span class="hl">10%→100%</span>
+      steps 1-3: prev LR ramps <span class="hl2">100%→10%</span>, grad_clip=<span class="hl2">0.5</span>
+      steps 4-10: prev at 10%, grad_clip=<span class="hl">1.0</span>
+      <span class="dim">reset Adam m,v on unfreeze</span>
+      <span class="dim">gradient norm EMA smooths spikes</span>
 
     <span class="hl2">EMA sync</span>: each layer w = 0.99*w + 0.01*nearest_trained_w
     reset to layer 0, repeat
+
+<span class="hl">LOSS SPIKE REDUCTION</span> <span class="dim">(6 techniques, 0 VRAM cost)</span>
+<span class="dim">──────────────────────────────────────────────────</span>
+  1. Active LR ramp:     <span class="hl">10%→100%</span> over 8 steps (smooth start)
+  2. Prev LR ramp-down:  <span class="hl2">100%→10%</span> over 3 steps (smooth exit)
+  3. Skip first step:    don't step on <span class="dim">step_in_group == 0</span>
+  4. Optimizer reset:    zero <span class="dim">m, v</span> on unfreeze (clean slate)
+  5. Grad norm EMA:      scalar EMA, scale grads by <span class="hl">ema/current</span>
+  6. Dynamic grad_clip:  <span class="hl2">0.5</span> for first 3 steps, then <span class="hl">1.0</span>
 
 <span class="hl">VRAM BREAKDOWN</span> <span class="dim">(per training step)</span>
 <span class="dim">──────────────────────────────────────────────────</span>
@@ -166,19 +182,6 @@
   Optimizer:  only <span class="hl">2 layers</span> (AdamW state = 2x mem)
   Activations: 1 micro-batch at a time (batch_size=1)
   Total:       <span class="hl">~1.2 GB peak</span> on 4GB VRAM GPU
-
-<span class="hl">COMPARED TO OLD LOGIC</span>
-<span class="dim">──────────────────────────────────────────────────</span>
-  Old: soft-freeze ALL 11 inactive layers at <span class="dim">1% LR</span>
-       → gradients computed for all layers (wasteful)
-       → global sync phase: unfreeze ALL, full LR
-       → <span class="dim">VRAM spikes during sync</span>
-
-  New: hard-freeze 10 layers (LR=0, no grads)
-       prev layer at <span class="hl2">10% LR</span> (keeps momentum)
-       active layer LR ramp <span class="hl">50%→100%</span> (prevents loss spike)
-       EMA sync instead of full unfreeze
-       → <span class="hl">VRAM stays flat entire training</span>
 
 <span class="hl">EARLY STOPPING</span>
 <span class="dim">──────────────────────────────────────────────────</span>
@@ -193,8 +196,10 @@
       <div class="ii"><span class="lb2">Step in layer: </span><span class="vl" id="is">—</span></div>
       <div class="ii"><span class="lb2">Active layer: </span><span class="vl" id="ia">—</span></div>
       <div class="ii"><span class="lb2">Total steps: </span><span class="vl" id="it">0</span></div>
-      <div class="ii"><span class="lb2">freeze_lr_mult: </span><span class="vl">0.1 (10%)</span></div>
-      <div class="ii"><span class="lb2">LR ramp: </span><span class="vl" id="iramp">50%→100% over 5 steps</span></div>
+      <div class="ii"><span class="lb2">Active LR: </span><span class="vl" id="ialr">10%</span></div>
+      <div class="ii"><span class="lb2">Prev LR: </span><span class="vl" id="iplr">100%</span></div>
+      <div class="ii"><span class="lb2">grad_clip: </span><span class="vl" id="igc">0.5</span></div>
+      <div class="ii"><span class="lb2">Skip step: </span><span class="vl" id="iskip">Yes</span></div>
       <div class="ii"><span class="lb2">EMA decay: </span><span class="vl">0.99</span></div>
       <div class="ii"><span class="lb2">Loss threshold: </span><span class="vl">1e-4</span></div>
       <div class="ii"><span class="lb2">Frozen layers: </span><span class="vl" id="ifz">10</span></div>
@@ -276,14 +281,17 @@ function update() {
     const b = document.getElementById(`bar${i}`);
     b.classList.remove('active');
     if (i === ci) {
-      const rampPct = Math.min(sg / 5, 1.0);
-      const lrPct = 50 + 50 * rampPct;
+      const rampPct = Math.min(sg / 8, 1.0);
+      const lrPct = 10 + 90 * rampPct;
+      const isSkip = sg === 0;
       b.style.background = '#3fb950'; b.style.color = '#0d1117';
-      b.textContent = `Layer ${i} — ACTIVE (LR: ${lrPct.toFixed(0)}%)`;
+      b.textContent = isSkip ? `Layer ${i} — SKIP (noisy gradient)` : `Layer ${i} — ACTIVE (LR: ${lrPct.toFixed(0)}%)`;
       b.classList.add('active');
     } else if (i === p) {
+      const prevDownPct = Math.min(sg / 3, 1.0);
+      const prevLrPct = 100 - 90 * prevDownPct;
       b.style.background = '#1f6feb'; b.style.color = '#c9d1d9';
-      b.textContent = `Layer ${i} — soft-frozen (10% LR)`;
+      b.textContent = `Layer ${i} — prev (LR: ${prevLrPct.toFixed(0)}%)`;
     } else {
       b.style.background = '#484f58'; b.style.color = '#8b949e';
       b.textContent = `Layer ${i} — hard-frozen`;
@@ -296,14 +304,17 @@ function update() {
     const val = document.getElementById(`lv${i}`);
     let pct, color;
     if (i === ci) {
-      const rampPct = Math.min(sg / 5, 1.0);
-      pct = 50 + 50 * rampPct;
+      const rampPct = Math.min(sg / 8, 1.0);
+      pct = 10 + 90 * rampPct;
       color = '#3fb950';
-    } else if (i === p) { pct = 10; color = '#1f6feb'; }
-    else { pct = 0; color = '#484f58'; }
+    } else if (i === p) {
+      const prevDownPct = Math.min(sg / 3, 1.0);
+      pct = 100 - 90 * prevDownPct;
+      color = '#1f6feb';
+    } else { pct = 0; color = '#484f58'; }
     bar.style.width = Math.max(pct, 2) + '%';
     bar.style.background = color;
-    val.textContent = pct === 100 ? '100%' : pct === 10 ? '10%' : pct === 0 ? '0%' : pct.toFixed(0) + '%';
+    val.textContent = pct >= 99 ? '100%' : pct <= 11 ? '10%' : pct === 0 ? '0%' : pct.toFixed(0) + '%';
   }
 
   // Info
@@ -312,6 +323,13 @@ function update() {
   document.getElementById('ia').textContent = `L${ci}`;
   document.getElementById('ia').style.color = '#3fb950';
   document.getElementById('it').textContent = tot;
+
+  const activeRampPct = Math.min(sg / 8, 1.0);
+  document.getElementById('ialr').textContent = sg === 0 ? 'SKIP' : (10 + 90 * activeRampPct).toFixed(0) + '%';
+  const prevDownPct = Math.min(sg / 3, 1.0);
+  document.getElementById('iplr').textContent = (100 - 90 * prevDownPct).toFixed(0) + '%';
+  document.getElementById('igc').textContent = sg <= 3 ? '0.5' : '1.0';
+  document.getElementById('iskip').textContent = sg === 0 ? 'Yes' : 'No';
   document.getElementById('ifz').textContent = NL - 2;
 
   // EMA box
