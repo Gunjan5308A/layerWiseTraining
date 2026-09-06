@@ -41,13 +41,13 @@ grad_clip_warmup = 0.5
 grad_clip_warmup_steps = 3
 grad_ema_decay = 0.9
 loss_stop_thresh = 1e-4
-save_interval = 1000
+save_interval = 500
 
 # eval & logging
 eval_interval = 500
 eval_iters = 200
 log_interval = 1
-always_save_checkpoint = True
+always_save_checkpoint = False
 
 # performance
 compile = False

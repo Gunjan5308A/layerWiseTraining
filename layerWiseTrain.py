@@ -604,11 +604,9 @@ while count < max_iters:
             'cycle_idx': cycle_idx,
             'step_in_group': step_in_group,
         }
-        torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{count}.pt'))
         torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
         print(f"  >> Checkpoint saved at step {count}")
         if notebook:
-            rclone_upload(os.path.join(out_dir, f'ckpt_{count}.pt'), gdrive_remote, gdrive_subdir)
             rclone_upload(os.path.join(out_dir, 'ckpt.pt'), gdrive_remote, gdrive_subdir)
 
     # Advance layer or EMA sync
