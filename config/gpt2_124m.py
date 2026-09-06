@@ -45,4 +45,4 @@ save_interval = 500
 eval_interval = 500
 eval_iters = 200
 log_interval = 1
-always_save_checkpoint = False
+always_save_checkpoint = True
