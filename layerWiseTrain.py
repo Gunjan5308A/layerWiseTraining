@@ -32,6 +32,7 @@ import time
 import math
 import pickle
 import inspect
+import subprocess
 from datetime import datetime
 from contextlib import nullcontext
 import matplotlib
@@ -104,19 +105,41 @@ loss_stop_thresh = 1e-4
 ema_decay = 0.99
 ema_sync_every_cycle = True
 save_interval = 1000
+# notebook / rclone settings
+notebook = False
+gdrive_remote = 'gdrive'
+gdrive_subdir = 'nanoGPT/checkpoints'
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read())
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
 
-# ── Output stats directory (unique per run) ──────────────────────────────────
-RUN_ID = datetime.now().strftime('%Y%m%d_%H%M%S')
-STATS_DIR = os.path.join('output_stats', RUN_ID)
+# ── Output stats directory ───────────────────────────────────────────────────
+STATS_DIR = 'output_stats'
 os.makedirs(STATS_DIR, exist_ok=True)
-CSV_PATH = os.path.join(STATS_DIR, f'train_log.csv')
+CSV_PATH = os.path.join(STATS_DIR, 'train_log.csv')
 PLOT_PATH = os.path.join(STATS_DIR, 'loss_plot.png')
 SUMMARY_PATH = os.path.join(STATS_DIR, 'run_summary.txt')
+
+# ── rclone upload helper ─────────────────────────────────────────────────────
+def rclone_upload(src, remote, dest_subdir):
+    """Upload src file/dir to remote:dest_subdir via rclone. Returns True on success."""
+    dest = f"{remote}:{dest_subdir}"
+    try:
+        cmd = ['rclone', 'copy', src, dest, '--transfers', '4', '--checkers', '8']
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            print(f"  >> rclone upload failed: {result.stderr.strip()}")
+            return False
+        print(f"  >> Uploaded to {dest}")
+        return True
+    except FileNotFoundError:
+        print("  >> rclone not found — skipping upload")
+        return False
+    except subprocess.TimeoutExpired:
+        print("  >> rclone upload timed out")
+        return False
 
 # ── DDP setup ────────────────────────────────────────────────────────────────
 ddp = int(os.environ.get('RANK', -1)) != -1
@@ -445,7 +468,6 @@ freeze_layer_params(raw_model, always_trainable_groups, layer_wise_groups, layer
 cycle_num = count // (n_layers * layer_examples)  # which full cycle we're in
 
 print(f"Training {n_layers} layers x {layer_examples} steps each = {n_layers * layer_examples} steps/cycle")
-print(f"Run ID: {RUN_ID}")
 print(f"Stats dir: {STATS_DIR}")
 
 while count < max_iters:
@@ -495,6 +517,8 @@ while count < max_iters:
                     'step_in_group': step_in_group,
                 }
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt_eval.pt'))
+                if notebook:
+                    rclone_upload(os.path.join(out_dir, 'ckpt_eval.pt'), gdrive_remote, gdrive_subdir)
     if count == 0 and eval_only:
         break
 
@@ -583,6 +607,9 @@ while count < max_iters:
         torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{count}.pt'))
         torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
         print(f"  >> Checkpoint saved at step {count}")
+        if notebook:
+            rclone_upload(os.path.join(out_dir, f'ckpt_{count}.pt'), gdrive_remote, gdrive_subdir)
+            rclone_upload(os.path.join(out_dir, 'ckpt.pt'), gdrive_remote, gdrive_subdir)
 
     # Advance layer or EMA sync
     if step_in_group >= layer_examples:
@@ -687,17 +714,17 @@ if master_process:
     lines2, labels2 = ax3b.get_legend_handles_labels()
     ax3a.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc='upper left')
 
-    fig.text(0.99, 0.01, f'Run {RUN_ID} | {count} steps | {cycle_num} cycles | Peak VRAM: {vram_gb:.2f} GB',
+    fig.text(0.99, 0.01, f'{count} steps | {cycle_num} cycles | Peak VRAM: {vram_gb:.2f} GB',
              ha='right', va='bottom', fontsize=9, color='gray', style='italic')
 
     plt.savefig(PLOT_PATH, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.savefig(os.path.join(STATS_DIR, 'loss_plot.svg'), bbox_inches='tight', facecolor='white')
+    plt.show()
     plt.close()
     print(f"\nPlot saved: {PLOT_PATH}")
 
     # ── Run summary ──────────────────────────────────────────────────────────
     with open(SUMMARY_PATH, 'w') as f:
-        f.write(f"Run ID: {RUN_ID}\n")
         f.write(f"Timestamp: {datetime.now().isoformat()}\n")
         f.write(f"{'='*60}\n\n")
         f.write(f"CONFIGURATION\n")
@@ -741,6 +768,9 @@ if master_process:
         f.write(f"  New sync: EMA blend — no unfreeze, no VRAM spike\n")
         f.write(f"  Key diff: prev layer gets momentum continuity, rest stay dead frozen\n")
     print(f"Summary saved: {SUMMARY_PATH}")
+
+    if notebook:
+        rclone_upload(STATS_DIR, gdrive_remote, gdrive_subdir)
 
     print(f"\n{'='*60}")
     print(f"  DONE — {count} steps, {cycle_num} cycles")
