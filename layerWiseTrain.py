@@ -62,6 +62,7 @@ dataset = 'fineweb5b'
 dataset_dirs = {
     'openwebtext': 'data/openwebtext',
     'fineweb5b': 'data/fineweb5b',
+    'fineweb600m': 'data/fineweb600m',
     'shakespeare': 'data/shakespeare',
     'shakespeare_char': 'data/shakespeare_char',
 }
